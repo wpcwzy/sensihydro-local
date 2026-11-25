@@ -95,11 +95,14 @@ requests to read and control the indoor units directly over RS485.
 
    Open `http://<bridge-ip>:8090/` for the web remote control.
 
-4. **Home Assistant** (optional): copy `custom_components/sensihydro/` into
-   `/config/custom_components/`, restart HA, add the integration with the OEM app
-   account (phone + password), then set *Local bridge URL* to
-   `http://<bridge-ip>:8090` in the integration options. A
-   `binary_sensor.…_local_bridge` entity turns `on` when the local path is healthy.
+4. **Home Assistant** (optional):
+   - **HACS**: HACS → Integrations → ⋮ → Custom repositories → this repo URL,
+     category *Integration* → install "Sensi Hydro Local" → restart HA;
+   - **manual**: copy `custom_components/sensihydro/` into `/config/custom_components/`
+     and restart HA;
+   - add the integration with the OEM app account (phone + password), then set
+     *Local bridge URL* to `http://<bridge-ip>:8090` in the integration options. A
+     `binary_sensor.…_local_bridge` entity turns `on` when the local path is healthy.
 
 5. **Xiaomi / Xiaoai** (optional): see [extras/bemfa_xiaoai](extras/bemfa_xiaoai/README.md).
 

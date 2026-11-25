@@ -75,7 +75,7 @@
    脚本会为 DTU 建一个"按客户端上游 DNS"条目，指向 bridge 内置 DNS
    （`<bridge-ip>:15353`），并清理历史遗留的全局 `$dnsrewrite` 规则
    （全局重定向会把 HA/手机的 HTTPS 也劫持到 NAS，导致云端接口超时——
-   见 [docs/zh/architecture.md](docs/zh/architecture.md#为什么不能用全局-dns-重定向)）。
+   见 [docs/zh/architecture.md](docs/zh/architecture.md)）。
 
 3. **验证**：
 
@@ -86,10 +86,12 @@
 
    浏览器打开 `http://<bridge-ip>:8090/` 即可用网页遥控器。
 
-4. **Home Assistant**（可选）：把 `custom_components/sensihydro/` 拷到
-   `/config/custom_components/`，重启 HA，用官方 App 的账号（手机号+密码）添加集成，
-   然后在集成「配置」里把「本地桥接地址」填 `http://<bridge-ip>:8090`。
-   本地通道正常时会出现 `binary_sensor.…_本地桥接` = `on`。
+4. **Home Assistant**（可选）：
+   - **HACS 安装**：HACS → 集成 → 右上角 ⋮ → 自定义仓库 → 填本仓库地址、类别选「集成」→
+     安装 "Sensi Hydro Local" → 重启 HA；
+   - **手动安装**：把 `custom_components/sensihydro/` 拷到 `/config/custom_components/` → 重启 HA；
+   - 用官方 App 的账号（手机号+密码）添加集成，然后在集成「配置」里把「本地桥接地址」填
+     `http://<bridge-ip>:8090`。本地通道正常时会出现 `binary_sensor.…_本地桥接` = `on`。
 
 5. **小爱同学**（可选）：见 [extras/bemfa_xiaoai](extras/bemfa_xiaoai/README.md)。
 

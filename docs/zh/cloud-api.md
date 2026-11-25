@@ -58,7 +58,7 @@ POST /device/updateMode
 {"id": <deviceId>, "deviceMode": "0".."8"}
 ```
 
-`deviceMode` 与本地寄存器（`0x05DD/0x05DE/0x05E0`）的对应见 [registers.md](registers.md#3-主机模式-0x05dc-起)。
+`deviceMode` 与本地寄存器（`0x05DD/0x05DE/0x05E0`）的对应见 [registers.md](registers.md)。
 云端会对本地寄存器改动做轮询同步（约 15–30 秒后 App 显示一致）。
 
 ## 已知怪癖
