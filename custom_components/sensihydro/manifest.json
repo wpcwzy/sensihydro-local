@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/wpcwzy/sensihydro-local/issues",
   "loggers": ["custom_components.sensihydro"],
   "requirements": [],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }

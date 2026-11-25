@@ -45,6 +45,9 @@ requests to read and control the indoor units directly over RS485.
   combinations — mapped to the cloud's `deviceMode` 0..8.
 - Outdoor-unit diagnostics (ambient/water/coil/discharge temps, pressures, compressor
   rpm, currents, EEV positions) read locally.
+- Diagnostics that stay readable: one aggregated **fault summary** sensor (`正常` or a
+  comma-separated list of active faults) and parameter sensors that keep their last
+  value instead of flapping to `unknown`, so the history graphs stay continuous.
 - Web remote control (mobile friendly), JSON API, Home Assistant + HomeKit via HA.
 - Both the official app **and** local control work at the same time.
 

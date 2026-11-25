@@ -46,20 +46,8 @@ async def async_setup_entry(
         manufacturer=MANUFACTURER,
         model=MODEL,
     )
-    entities.append(
-        SensiHydroFaultSensor(coordinator, "device", None, gateway_info)
-    )
-    for unit_id, unit in coordinator.data.items():
-        unit_info = DeviceInfo(
-            identifiers={(DOMAIN, str(unit_id))},
-            name=unit.get("name") or f"Unit {unit_id}",
-            manufacturer=MANUFACTURER,
-            model=MODEL,
-            via_device=(DOMAIN, str(coordinator.device_id)),
-        )
-        entities.append(
-            SensiHydroFaultSensor(coordinator, "unit", unit_id, unit_info)
-        )
+    # Protection/fault flags are aggregated in the "故障汇总" sensor of the
+    # sensor platform, so no per-unit fault binary sensors are created here.
 
     async_add_entities(entities)
 
@@ -126,80 +114,4 @@ class SensiHydroLocalBridge(
             "dtu_connected": status.get("dtu_connected"),
             "cloud_connected": status.get("cloud_connected"),
             "injected_requests": status.get("injected_requests"),
-        }
-
-
-class SensiHydroFaultSensor(
-    CoordinatorEntity[SensiHydroCoordinator], BinarySensorEntity
-):
-    """Aggregated protection/fault state of the outdoor or an indoor unit."""
-
-    _attr_has_entity_name = True
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_name = "故障/保护"
-
-    def __init__(
-        self,
-        coordinator: SensiHydroCoordinator,
-        scope: str,
-        unit_id: int | None,
-        device_info: DeviceInfo,
-    ) -> None:
-        """Initialize the fault sensor."""
-        super().__init__(coordinator)
-        self._scope = scope
-        self._unit_id = unit_id
-        self._attr_device_info = device_info
-        suffix = (
-            f"{coordinator.device_id}_fault"
-            if scope == "device"
-            else f"{coordinator.device_id}_{unit_id}_fault"
-        )
-        self._attr_unique_id = f"{DOMAIN}_{suffix}"
-
-    def _flags(self) -> dict[str, dict[str, Any]]:
-        """Return the flag parameters of this scope."""
-        if self._scope == "device":
-            params = self.coordinator.device_params
-        else:
-            params = self.coordinator.unit_params.get(self._unit_id or -1) or {}
-        return {
-            str(code): param
-            for code, param in params.items()
-            if is_flag_code(str(code))
-        }
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return True when any protection/fault flag is active."""
-        flags = self._flags()
-        if not flags:
-            return None
-        known = [
-            parse_param_value(param.get("value")) for param in flags.values()
-        ]
-        known = [value for value in known if value is not None]
-        if not known:
-            return None
-        return any(is_truthy(value) for value in known)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the individual flags."""
-        flags = self._flags()
-        active: list[str] = []
-        raw: dict[str, Any] = {}
-        for param in flags.values():
-            value = parse_param_value(param.get("value"))
-            if value is None:
-                continue
-            raw[str(param.get("name") or param.get("code"))] = value
-            if is_truthy(value):
-                active.append(str(param.get("name") or param.get("code")))
-        return {
-            "active_faults": active,
-            "active_count": len(active),
-            "total_flags": len(flags),
-            "flags": raw,
         }

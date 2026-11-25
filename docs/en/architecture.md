@@ -92,6 +92,28 @@ Every HA poll:
 > Matching relies on unit names: the bridge unit names must equal the room names in the
 > OEM app.
 
+## Diagnostics and history
+
+The cloud parameter table (`customservice/selectConfigById`) contains two kinds of fields:
+
+1. **Protection/fault flags** (`val125_*`…`val131_*`, `val211_*`, `val212_*`, ~131 in total)
+   are aggregated into **one** `fault summary` sensor: it reads `正常` (normal) when
+   everything is fine, otherwise it lists every active fault as "room fault-name",
+   comma separated; the raw values of all flags are exposed in the `flags` attribute.
+   Previously every flag was its own entity, and whenever the cloud returned `null` for
+   them they flapped to `unknown`.
+2. **Parameter values** (temperatures, pressures, speeds, versions, IDs, …) remain
+   **individual sensors** — they are not aggregated.
+
+To keep the history graphs continuous:
+
+- parameter tables are **merged**, never replaced, so a partial cloud response cannot
+  wipe previously known values;
+- sensor values are **sticky**: a missing value falls back to the last known one instead
+  of `unknown`;
+- after a restart the previous state is restored via `RestoreEntity`, so restarts do not
+  create gaps either.
+
 ## Ports
 
 | Port | Listener | Notes |

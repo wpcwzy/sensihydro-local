@@ -34,6 +34,7 @@ from homeassistant.const import (
     EntityCategory,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -203,8 +204,27 @@ def power_data(coordinator: SensiHydroCoordinator) -> dict[str, Any]:
     }
 
 
-class SensiHydroSensor(CoordinatorEntity[SensiHydroCoordinator], SensorEntity):
-    """Generic diagnostic sensor fed by a getter callback."""
+def _coerce_restored_state(state: str) -> float | int | None:
+    """Convert a restored numeric state back to a number."""
+    try:
+        return int(state)
+    except ValueError:
+        try:
+            return float(state)
+        except ValueError:
+            return None
+
+
+class SensiHydroSensor(
+    CoordinatorEntity[SensiHydroCoordinator], SensorEntity, RestoreEntity
+):
+    """Generic diagnostic sensor fed by a getter callback.
+
+    Diagnostic values come from a cloud table that occasionally returns only a
+    subset of its parameters.  The sensor therefore remembers the last value it
+    saw (and restores it after a restart) instead of flipping to ``unknown``,
+    which used to break the history graph into fragments.
+    """
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -237,14 +257,35 @@ class SensiHydroSensor(CoordinatorEntity[SensiHydroCoordinator], SensorEntity):
         self._attr_entity_category = entity_category
         self._getter = getter
         self._attrs_getter = attrs_getter
+        self._last_value: Any = None
+        self._restored_value: float | int | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last known value so a restart does not create gaps."""
+        await super().async_added_to_hass()
+        if self.device_class == SensorDeviceClass.TIMESTAMP:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state in (
+            STATE_UNKNOWN,
+            STATE_UNAVAILABLE,
+        ):
+            return
+        self._restored_value = _coerce_restored_state(last_state.state)
 
     @property
     def native_value(self) -> Any:
-        """Return the current value."""
+        """Return the current value, falling back to the last known one."""
         try:
-            return self._getter(self.coordinator)
+            value = self._getter(self.coordinator)
         except (KeyError, TypeError, ValueError):
-            return None
+            value = None
+        if value is not None:
+            self._last_value = value
+            return value
+        if self._last_value is not None:
+            return self._last_value
+        return self._restored_value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -255,6 +296,81 @@ class SensiHydroSensor(CoordinatorEntity[SensiHydroCoordinator], SensorEntity):
             return self._attrs_getter(self.coordinator)
         except (KeyError, TypeError, ValueError):
             return None
+
+
+class SensiHydroFaultSummarySensor(SensiHydroSensor):
+    """All protection/fault flags aggregated into one readable sensor.
+
+    One entity for the whole system: state is ``正常`` when every flag is
+    normal, otherwise it lists the active fault names (comma separated,
+    prefixed with the unit name for indoor-unit faults).
+    """
+
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def __init__(self, coordinator: SensiHydroCoordinator) -> None:
+        super().__init__(
+            coordinator,
+            unique_id_suffix=f"{coordinator.device_id}_fault_summary",
+            name="故障汇总",
+            device_info=_gateway_device_info(coordinator),
+            getter=self._summary,
+            attrs_getter=self._attrs,
+        )
+
+    def _active(self) -> tuple[int, list[str], dict[str, str]]:
+        """Return (known flag count, active fault labels, raw flag values)."""
+        known = 0
+        labels: list[str] = []
+        raw: dict[str, str] = {}
+        for code, param in self.coordinator.device_params.items():
+            if not is_flag_code(str(code)):
+                continue
+            value = parse_param_value(param.get("value"))
+            if value is None:
+                continue
+            known += 1
+            name = str(param.get("name") or code)
+            raw[name] = str(value)
+            if is_truthy(value):
+                labels.append(name)
+        for unit_id, params in self.coordinator.unit_params.items():
+            unit_name = str(
+                (self.coordinator.data.get(unit_id) or {}).get("name")
+                or f"Unit {unit_id}"
+            )
+            for code, param in params.items():
+                if not is_flag_code(str(code)):
+                    continue
+                value = parse_param_value(param.get("value"))
+                if value is None:
+                    continue
+                known += 1
+                name = str(param.get("name") or code)
+                raw[f"{unit_name} {name}"] = str(value)
+                if is_truthy(value):
+                    labels.append(f"{unit_name} {name}")
+        # de-duplicate while keeping order
+        ordered: list[str] = []
+        for label in labels:
+            if label not in ordered:
+                ordered.append(label)
+        return known, ordered, raw
+
+    def _summary(self, _coordinator: SensiHydroCoordinator) -> str | None:
+        known, labels, _raw = self._active()
+        if known == 0:
+            return None  # no flag data at all -> keep the previous value
+        return ", ".join(labels) if labels else "正常"
+
+    def _attrs(self, _coordinator: SensiHydroCoordinator) -> dict[str, Any]:
+        known, labels, raw = self._active()
+        return {
+            "active_count": len(labels),
+            "active_faults": labels,
+            "known_flags": known,
+            "flags": raw,
+        }
 
 
 class SensiHydroParamSensor(SensiHydroSensor):
@@ -537,8 +653,15 @@ async def async_setup_entry(
         ]
     )
 
+    # Protection/fault flags are aggregated into a single readable sensor;
+    # parameter (temperature/pressure/...) sensors stay independent.
+    _remove_legacy_fault_entities(hass, entry, coordinator)
+    entities.append(SensiHydroFaultSummarySensor(coordinator))
+
     # --- run-time parameter table of the outdoor unit ------------------
     for code, param in coordinator.device_params.items():
+        if is_flag_code(str(code)):
+            continue
         entities.append(SensiHydroParamSensor(coordinator, "device", code, param))
 
     # --- per indoor unit fields and parameters -------------------------
@@ -550,12 +673,44 @@ async def async_setup_entry(
                 )
             )
         for code, param in (coordinator.unit_params.get(unit_id) or {}).items():
+            if is_flag_code(str(code)):
+                continue
             entities.append(
                 SensiHydroParamSensor(coordinator, "unit", code, param, unit_id)
             )
 
     _LOGGER.debug("SensiHydro: adding %s diagnostic sensors", len(entities))
     async_add_entities(entities)
+
+
+def _remove_legacy_fault_entities(
+    hass: HomeAssistant,
+    entry: SensiHydroConfigEntry,
+    coordinator: SensiHydroCoordinator,
+) -> None:
+    """Delete the per-flag sensors and fault binary sensors of older versions."""
+    unique_ids: set[str] = {f"{DOMAIN}_{coordinator.device_id}_fault"}
+    for unit_id in coordinator.data:
+        unique_ids.add(f"{DOMAIN}_{coordinator.device_id}_{unit_id}_fault")
+    for code in coordinator.device_params:
+        if is_flag_code(str(code)):
+            unique_ids.add(f"{DOMAIN}_{coordinator.device_id}_{code}")
+    for unit_id, params in coordinator.unit_params.items():
+        for code in params:
+            if is_flag_code(str(code)):
+                unique_ids.add(f"{DOMAIN}_{coordinator.device_id}_{unit_id}_{code}")
+    registry = er.async_get(hass)
+    removed = 0
+    for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registry_entry.unique_id in unique_ids:
+            registry.async_remove(registry_entry.entity_id)
+            removed += 1
+    if removed:
+        _LOGGER.info(
+            "SensiHydro: removed %s legacy fault entities "
+            "(all fault flags are now shown by the fault summary sensor)",
+            removed,
+        )
 
 
 def _notice_count(coordinator: SensiHydroCoordinator, key: str) -> int | None:

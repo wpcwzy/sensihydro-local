@@ -303,7 +303,12 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                     device_params[str(code)] = param
             # Some firmwares put the per-unit parameters in the same entry.
         if device_params:
-            self.device_params = device_params
+            # Merge instead of replacing: the cloud sometimes returns only a
+            # subset of the parameters, and dropping the rest would make the
+            # diagnostic sensors flap to "unknown".
+            merged = dict(self.device_params)
+            merged.update(device_params)
+            self.device_params = merged
 
         unit_params: dict[int, dict[str, dict[str, Any]]] = {}
         for entry in service.get("paramUnitDtoList") or []:
@@ -319,7 +324,12 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             if params:
                 unit_params[unit_id] = params
         if unit_params:
-            self.unit_params = unit_params
+            merged_units = dict(self.unit_params)
+            for unit_id, params in unit_params.items():
+                existing = dict(merged_units.get(unit_id) or {})
+                existing.update(params)
+                merged_units[unit_id] = existing
+            self.unit_params = merged_units
 
         _LOGGER.debug(
             "SensiHydro: parsed %s device parameters and %s unit parameter sets",
