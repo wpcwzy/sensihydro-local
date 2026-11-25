@@ -1,0 +1,66 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "连接到心海悦云端",
+        "description": "使用 Sensi 海悦 App 的账号（手机号 + 密码）登录艾默生/谷轮云端。",
+        "data": {
+          "username": "手机号",
+          "password": "密码"
+        }
+      },
+      "device": {
+        "title": "选择空调设备",
+        "description": "该账号下有多台设备，请选择要接入的中央空调。",
+        "data": {
+          "device": "设备"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新登录心海悦云端",
+        "description": "云端拒绝了原有的登录凭据，请重新输入账号密码。",
+        "data": {
+          "username": "手机号",
+          "password": "密码"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "手机号或密码错误",
+      "cannot_connect": "无法连接到心海悦云端",
+      "no_devices": "该账号下没有找到空调设备",
+      "unknown": "未知错误，请查看日志"
+    },
+    "abort": {
+      "already_configured": "该设备已经配置过了",
+      "reauth_successful": "重新认证成功"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SensiHydro 选项",
+        "data": {
+          "scan_interval": "云端轮询间隔（秒）",
+          "nominal_voltage": "额定电压（V，电压读数无效时用于估算功率）",
+          "local_api_url": "本地桥接地址（docker 容器，留空禁用本地控制）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "sleep": {
+        "name": "睡眠"
+      }
+    },
+    "binary_sensor": {
+      "cloud_link": {
+        "name": "云端链路"
+      },
+      "local_bridge": {
+        "name": "本地桥接"
+      }
+    }
+  }
+}

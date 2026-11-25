@@ -1,0 +1,8 @@
+[
+  {"name": "living_room", "sequence": 6},
+  {"name": "dining_room", "sequence": 1},
+  {"name": "bedroom_2f_south", "sequence": 4},
+  {"name": "bedroom_2f_north", "sequence": 7},
+  {"name": "bedroom_3f_south", "sequence": 2},
+  {"name": "bedroom_3f_north", "sequence": 5}
+]

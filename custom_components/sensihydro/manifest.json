@@ -1,0 +1,13 @@
+{
+  "domain": "sensihydro",
+  "name": "SensiHydro",
+  "codeowners": ["@wpcwzy"],
+  "config_flow": true,
+  "documentation": "https://github.com/wpcwzy/sensihydro-local",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/wpcwzy/sensihydro-local/issues",
+  "loggers": ["custom_components.sensihydro"],
+  "requirements": [],
+  "version": "1.0.0"
+}

@@ -1,0 +1,17 @@
+# Example Home Assistant configuration snippets.
+#
+# 1) Optional: sync a few entities to Bemfa cloud for Xiaomi Mijia / Xiaoai.
+#    Requires extras/bemfa_xiaoai/custom_components/bemfa_xiaoai to be installed.
+#    The uid is your own Bemfa private key - keep it out of public repositories.
+#
+# bemfa_xiaoai:
+#   uid: !secret bemfa_uid
+#   entities:
+#     - switch.yard_light
+#     - climate.living_room
+#     - climate.dining_room
+
+# 2) Optional: point the Sensi Hydro integration at the LAN bridge.
+#    This is normally configured in the UI (Settings -> Devices & services ->
+#    SensiHydro -> Configure -> "Local bridge URL"), for example:
+#      http://192.168.1.10:8090

@@ -1,0 +1,66 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the SensiHydro cloud",
+        "description": "Sign in with the account (phone number + password) used by the Sensi Home app.",
+        "data": {
+          "username": "Phone number",
+          "password": "Password"
+        }
+      },
+      "device": {
+        "title": "Select air conditioner",
+        "description": "This account owns more than one device, choose one.",
+        "data": {
+          "device": "Device"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with the SensiHydro cloud",
+        "description": "The cloud rejected the stored credentials, please sign in again.",
+        "data": {
+          "username": "Phone number",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid phone number or password",
+      "cannot_connect": "Cannot reach the SensiHydro cloud",
+      "no_devices": "No air conditioner found for this account",
+      "unknown": "Unexpected error, check the logs"
+    },
+    "abort": {
+      "already_configured": "This device is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SensiHydro options",
+        "data": {
+          "scan_interval": "Cloud polling interval (seconds)",
+          "nominal_voltage": "Nominal voltage (V, used to estimate power when voltage is invalid)",
+          "local_api_url": "Local bridge URL (docker container, leave empty to disable)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "sleep": {
+        "name": "Sleep"
+      }
+    },
+    "binary_sensor": {
+      "cloud_link": {
+        "name": "Cloud link"
+      },
+      "local_bridge": {
+        "name": "Local bridge"
+      }
+    }
+  }
+}

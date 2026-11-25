@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>心海悦 · 空调遥控</title>
+<style>
+  :root{
+    --bg:#0b1220; --bg2:#0f1a2e; --card:rgba(255,255,255,.055);
+    --card-b:rgba(255,255,255,.09); --txt:#eaf0fb; --dim:#8b98ad;
+    --accent:#4f8cff; --heat:#ff8a4c; --cool:#4fc3ff; --floor:#ff5c7a;
+    --ok:#3ddc97; --off:#5b6b83; --shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:
+      radial-gradient(1200px 800px at 85% -10%, rgba(79,140,255,.20), transparent 60%),
+      radial-gradient(900px 700px at -10% 110%, rgba(255,92,122,.14), transparent 60%),
+      linear-gradient(160deg,var(--bg),var(--bg2));
+    color:var(--txt); min-height:100vh; padding:calc(env(safe-area-inset-top) + 14px) 14px calc(env(safe-area-inset-bottom) + 24px);
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 2px 18px}
+  .brand{display:flex;align-items:center;gap:11px;min-width:0}
+  .logo{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#4f8cff,#7d5cff);display:grid;place-items:center;box-shadow:0 6px 18px rgba(79,140,255,.35);flex:none}
+  .logo svg{width:21px;height:21px}
+  h1{font-size:17px;font-weight:650;margin:0;letter-spacing:.2px}
+  .sub{font-size:11.5px;color:var(--dim);margin-top:2px}
+  .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);background:var(--card);border:1px solid var(--card-b);padding:7px 11px;border-radius:999px;flex:none}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--off);box-shadow:0 0 0 3px rgba(255,255,255,.04)}
+  .dot.on{background:var(--ok);box-shadow:0 0 10px rgba(61,220,151,.8)}
+  main{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+  .card{position:relative;background:var(--card);border:1px solid var(--card-b);border-radius:22px;padding:16px 16px 14px;box-shadow:var(--shadow);backdrop-filter:blur(14px);overflow:hidden;transition:border-color .2s, transform .12s}
+  .card::before{content:"";position:absolute;inset:0;background:linear-gradient(160deg,var(--tint,rgba(79,140,255,.10)),transparent 55%);pointer-events:none;opacity:.9;transition:background .3s}
+  .card.off{opacity:.72}
+  .card.off::before{background:none}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative}
+  .name{font-size:15.5px;font-weight:650;display:flex;align-items:center;gap:8px}
+  .modebadge{font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--dim);border:1px solid rgba(255,255,255,.07)}
+  .power{position:relative;width:52px;height:30px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);cursor:pointer;transition:.22s;flex:none}
+  .power::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#aab6c9;transition:.22s}
+  .power.on{background:linear-gradient(135deg,#37d39a,#22b07c);border-color:transparent;box-shadow:0 4px 14px rgba(34,176,124,.4)}
+  .power.on::after{left:27px;background:#fff}
+  .temp{display:flex;align-items:flex-end;gap:16px;margin:16px 0 6px;position:relative}
+  .big{font-variant-numeric:tabular-nums;line-height:1;font-size:46px;font-weight:700;letter-spacing:-1.5px}
+  .big small{font-size:17px;font-weight:600;color:var(--dim);letter-spacing:0;margin-left:1px}
+  .now{font-size:12px;color:var(--dim);padding-bottom:7px}
+  .now b{color:#cdd8ea;font-weight:600}
+  .stepper{margin-left:auto;display:flex;align-items:center;gap:9px;padding-bottom:4px}
+  .rnd{width:38px;height:38px;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:var(--txt);font-size:20px;font-weight:600;display:grid;place-items:center;cursor:pointer;user-select:none;transition:.15s}
+  .rnd:active{transform:scale(.92);background:rgba(255,255,255,.14)}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px;position:relative}
+  .chip{padding:7px 12px;border-radius:11px;font-size:12.5px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.045);color:#c6d1e2;cursor:pointer;transition:.15s;white-space:nowrap}
+  .chip:active{transform:scale(.96)}
+  .chip.sel{background:linear-gradient(135deg,rgba(79,140,255,.95),rgba(125,92,255,.95));border-color:transparent;color:#fff;font-weight:600;box-shadow:0 4px 14px rgba(79,140,255,.35)}
+  .chip.sel.heat{background:linear-gradient(135deg,#ff9a52,#ff6b3d);box-shadow:0 4px 14px rgba(255,120,60,.32)}
+  .chip.sel.floor{background:linear-gradient(135deg,#ff6f8b,#ff3d63);box-shadow:0 4px 14px rgba(255,80,110,.32)}
+  .chip.sel.cool{background:linear-gradient(135deg,#4fc3ff,#2b8dff);box-shadow:0 4px 14px rgba(60,160,255,.32)}
+  .label{font-size:10.5px;letter-spacing:1.2px;color:var(--dim);margin:14px 0 7px;position:relative}
+  .fanrow{display:flex;gap:6px;overflow-x:auto;padding-bottom:3px;scrollbar-width:none;position:relative}
+  .fanrow::-webkit-scrollbar{display:none}
+  .fanrow .chip{padding:6px 11px;font-size:12px}
+  .foot{margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:14px;font-size:11px;color:var(--dim);position:relative;flex-wrap:wrap}
+  .foot b{color:#b9c6da;font-weight:600}
+  .hostcard{max-width:1180px;margin:0 auto 14px}
+  .hostcard .title{font-size:13.5px;font-weight:650;color:#cdd8ea}
+  .hostcard .hint{font-size:11px;color:var(--dim)}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:rgba(20,28,44,.96);border:1px solid var(--card-b);color:var(--txt);padding:11px 18px;border-radius:14px;font-size:13px;box-shadow:var(--shadow);opacity:0;transition:.28s;z-index:50;max-width:88vw;text-align:center}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.err{border-color:rgba(255,92,122,.5);color:#ffc2cc}
+  .skeleton{height:250px;border-radius:22px;background:linear-gradient(100deg,rgba(255,255,255,.04) 30%,rgba(255,255,255,.09) 50%,rgba(255,255,255,.04) 70%);background-size:200% 100%;animation:sh 1.2s infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+  @media (max-width:420px){ .big{font-size:40px} .card{padding:14px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v18M3 8l18 8M21 8L3 16"/>
+        </svg>
+      </div>
+      <div>
+        <h1>心海悦 · 空调遥控</h1>
+        <div class="sub" id="sub">正在连接…</div>
+      </div>
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">连接中</span></div>
+  </header>
+  <section class="card hostcard" id="hostmode">
+    <div class="row">
+      <div>
+        <div class="title">主机模式</div>
+        <div class="hint" id="hmHint">常规模式</div>
+      </div>
+      <div class="modebadge" id="hmName">--</div>
+    </div>
+    <div class="chips" id="hmChips" style="margin-top:12px">
+      <div class="chip" data-hm="normal">常规</div>
+      <div class="chip" data-hm="eco">节能</div>
+      <div class="chip" data-hm="quiet">静音</div>
+      <div class="chip" data-hm="boost">强热</div>
+    </div>
+  </section>
+  <main id="grid">
+    <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const MODES=[
+  {v:0,n:"冷风",c:"cool"},{v:1,n:"送风",c:""},{v:2,n:"热风",c:"heat"},
+  {v:3,n:"地暖",c:"floor"},{v:4,n:"热+暖",c:"heat"},{v:5,n:"除湿",c:"cool"}
+];
+const FANS=[{v:0,n:"自动",auto:true},{v:1,n:"1"},{v:2,n:"2"},{v:3,n:"3"},{v:4,n:"4"},{v:5,n:"5"},
+            {v:6,n:"6"},{v:7,n:"7"},{v:8,n:"8"},{v:9,n:"9"},{v:10,n:"10"}];
+const TINT={0:"rgba(79,195,255,.14)",1:"rgba(140,160,190,.10)",2:"rgba(255,138,76,.14)",
+            3:"rgba(255,92,122,.14)",4:"rgba(255,138,76,.16)",5:"rgba(79,195,255,.12)"};
+const FIELDS=["power","mode","target_temperature","fan_auto","fan_speed"];
+
+let state={}, host={mode:"--",quiet:false,eco:false,boost:false};
+let pending={};   // not sent yet (debounce)
+let optim={};     // sent, waiting for the poll to confirm
+let timers={};
+
+function toast(msg,err){
+  const t=document.getElementById("toast");
+  t.textContent=msg; t.className="toast show"+(err?" err":"");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.className="toast"+(err?" err":""),1800);
+}
+async function api(path,method="GET",body){
+  const opt={method,headers:{}};
+  if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
+  const r=await fetch(path,opt);
+  const j=await r.json().catch(()=>({ok:false,error:"HTTP "+r.status}));
+  if(!j.ok) throw new Error(j.error||("HTTP "+r.status));
+  return j;
+}
+function fmtT(v){ return (v===null||v===undefined||isNaN(v))?"--":Number(v).toFixed(1); }
+
+// ---- optimistic state -------------------------------------------------------
+function view(name){
+  const u=state[name]||{};
+  const v={...u};
+  const p=pending[name]||{};
+  const o=optim[name]||{};
+  for(const k of FIELDS){
+    if(p[k]!==undefined) v[k]=p[k];
+    else if(o[k]!==undefined) v[k]=o[k];
+  }
+  if(v.power!==undefined){
+    v.power=v.power?1:0;
+    v.power_str=v.power?"开":"关";
+  }
+  v.mode_str=(MODES.find(m=>m.v===v.mode)||{}).n||v.mode_str||"--";
+  return v;
+}
+function patch(name,obj){
+  pending[name]={...(pending[name]||{}),...obj};
+  render(); schedule(name);
+}
+function schedule(name){
+  clearTimeout(timers[name]);
+  timers[name]=setTimeout(()=>flush(name),260);
+}
+async function flush(name){
+  const body=pending[name];
+  if(!body) return;
+  delete pending[name];
+  const base="/api/unit/"+encodeURIComponent(name);
+  try{
+    if(body.power!==undefined) await api(base+"/power","POST",{on:!!body.power});
+    if(body.mode!==undefined) await api(base+"/mode","POST",{mode:body.mode});
+    if(body.target_temperature!==undefined) await api(base+"/target","POST",{temperature:body.target_temperature});
+    if(body.fan_auto!==undefined) await api(base+"/fan","POST", body.fan_auto?{auto:true}:{speed:body.fan_speed});
+    optim[name]={...body,until:Date.now()+12000};
+    setTimeout(refresh,400);
+  }catch(e){
+    toast(e.message,true);
+    delete optim[name];
+  }
+  render();
+}
+function cleanupOptim(){
+  const now=Date.now();
+  for(const n in optim){
+    const e=optim[n];
+    if(now>e.until){ delete optim[n]; continue; }
+    const u=state[n]||{};
+    let match=true;
+    for(const k of FIELDS){ if(e[k]!==undefined && u[k]!==e[k]){ match=false; break; } }
+    if(match) delete optim[n];
+  }
+}
+
+// ---- rendering --------------------------------------------------------------
+function cardHtml(u,name){
+  const on=u.power===1;
+  const tint=TINT[u.mode]||TINT[2];
+  const fanSel=u.fan_auto?0:(u.fan_speed||1);
+  return `
+  <section class="card ${on?"":"off"}" style="--tint:${tint}" data-unit="${name}">
+    <div class="row">
+      <div class="name">${name}<span class="modebadge">${on?u.mode_str:"已关"}</span></div>
+      <div class="power ${on?"on":""}" data-act="power"></div>
+    </div>
+    <div class="temp">
+      <div class="big">${fmtT(u.target_temperature)}<small>℃</small></div>
+      <div class="now">室温 <b>${fmtT(u.return_air_temperature)}℃</b></div>
+      <div class="stepper">
+        <div class="rnd" data-act="minus">−</div>
+        <div class="rnd" data-act="plus">+</div>
+      </div>
+    </div>
+    <div class="chips" data-group="mode">
+      ${MODES.map(m=>`<div class="chip ${u.mode===m.v&&on?"sel":""} ${m.c}" data-mode="${m.v}">${m.n}</div>`).join("")}
+    </div>
+    <div class="label">风速</div>
+    <div class="fanrow" data-group="fan">
+      ${FANS.map(f=>`<div class="chip ${fanSel===f.v?"sel":""}" data-fan="${f.v}" data-auto="${f.auto?1:0}">${f.n}</div>`).join("")}
+    </div>
+    <div class="foot">
+      <span>回风 <b>${fmtT(u.return_air_temperature)}℃</b></span>
+      <span>线控 <b>${fmtT(u.room_temperature)}℃</b></span>
+      <span>地暖阀 <b>${u.floor_valve?"开":"关"}</b></span>
+    </div>
+  </section>`;
+}
+function render(){
+  const grid=document.getElementById("grid");
+  if(!grid) return;
+  grid.innerHTML=Object.keys(state).map(n=>cardHtml(view(n),n)).join("") ||
+    `<div class="skeleton"></div><div class="skeleton"></div>`;
+  grid.querySelectorAll(".card").forEach(card=>{
+    const name=card.dataset.unit;
+    card.addEventListener("click",e=>onClick(e,name));
+  });
+}
+function onClick(e,name){
+  const el=e.target.closest("[data-act],[data-mode],[data-fan]");
+  if(!el) return;
+  const u=view(name);
+  if(el.dataset.act==="power") return patch(name,{power:u.power?0:1});
+  if(el.dataset.act==="minus"||el.dataset.act==="plus"){
+    const d=el.dataset.act==="plus"?0.5:-0.5;
+    const t=Math.round(((u.target_temperature||20)+d)*10)/10;
+    if(t<5||t>32) return toast("已到温度范围",true);
+    return patch(name,{target_temperature:t});
+  }
+  if(el.dataset.mode!==undefined) return patch(name,{mode:Number(el.dataset.mode)});
+  if(el.dataset.fan!==undefined){
+    const auto=el.dataset.auto==="1";
+    return patch(name,{fan_auto:auto,fan_speed:auto?0:Number(el.dataset.fan)});
+  }
+}
+
+// ---- host mode --------------------------------------------------------------
+function renderHost(){
+  const name=document.getElementById("hmName");
+  if(name) name.textContent=host.mode||"--";
+  const hint=document.getElementById("hmHint");
+  if(hint) hint.textContent=[host.boost?"强热":null,host.eco?"节能":null,host.quiet?"静音":null].filter(Boolean).join(" · ")||"常规模式";
+  document.querySelectorAll("[data-hm]").forEach(el=>{
+    const k=el.dataset.hm;
+    const on=(k==="eco"&&host.eco)||(k==="quiet"&&host.quiet)||(k==="boost"&&host.boost)||
+             (k==="normal"&&!host.eco&&!host.quiet&&!host.boost);
+    el.classList.toggle("sel",!!on);
+    el.classList.toggle("heat",k==="boost"&&!!host.boost);
+  });
+}
+document.addEventListener("DOMContentLoaded",()=>{
+  const box=document.getElementById("hmChips");
+  if(box) box.addEventListener("click",async e=>{
+    const el=e.target.closest("[data-hm]"); if(!el) return;
+    const k=el.dataset.hm;
+    const body=k==="normal"?{quiet:false,eco:false,boost:false}
+      :k==="eco"?{eco:!host.eco}:k==="quiet"?{quiet:!host.quiet}:{boost:!host.boost};
+    toast("正在切换主机模式…");
+    try{
+      const j=await api("/api/hostmode","POST",body);
+      host=j.hostmode||host; renderHost(); toast("主机模式："+host.mode);
+    }catch(err){ toast(err.message,true); }
+  });
+});
+
+// ---- polling ----------------------------------------------------------------
+let lastStatus=0;
+async function refresh(){
+  try{
+    const j=await api("/api/state");
+    state=j.units||{};
+    cleanupOptim(); render();
+    document.getElementById("sub").textContent="更新于 "+new Date().toLocaleTimeString("zh-CN",{hour12:false});
+    const now=Date.now();
+    if(now-lastStatus>15000){
+      lastStatus=now;
+      try{
+        const bj=await api("/api/status");
+        const ok=bj.dtu_connected&&bj.cloud_connected;
+        document.getElementById("dot").className="dot "+(ok?"on":"");
+        document.getElementById("statusText").textContent=ok?"已连接":"桥接异常";
+      }catch(e){}
+      try{ const hj=await api("/api/hostmode"); host=hj.hostmode||host; renderHost(); }catch(e){}
+    }
+  }catch(e){
+    document.getElementById("dot").className="dot";
+    document.getElementById("statusText").textContent="离线";
+    document.getElementById("sub").textContent=e.message;
+  }
+}
+renderHost();
+refresh();
+setInterval(refresh,2500);
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) refresh(); });
+setInterval(()=>{ for(const n in pending) flush(n); }, 1500);  // safety flush
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "domain": "bemfa_xiaoai",
+  "name": "Bemfa Xiaoai Sync",
+  "version": "1.0.0",
+  "documentation": "https://github.com/shimingyun/bemfa",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "cloud_push"
+}

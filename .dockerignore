@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.git/
+*.log
+docs/
+examples/
+custom_components/
+extras/
+tools/

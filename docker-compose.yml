@@ -1,0 +1,37 @@
+# Sensi Hydro local bridge
+#
+#   :5000  accepts the DTU connection and relays it to the vendor cloud,
+#          injecting our own Modbus requests on the same connection
+#   :8090  web remote control + JSON API
+#
+# host networking is recommended: the DTU always connects to port 5000 of
+# the address it resolved, and the web UI/API must be reachable on the LAN.
+# If your NAS cannot use host networking, comment out `network_mode` and use
+# the `ports:` mapping instead.
+
+services:
+  sensihydro-bridge:
+    build: .
+    image: sensihydro-bridge:1.0.0
+    container_name: sensihydro-bridge
+    restart: unless-stopped
+    network_mode: host
+    # ports:
+    #   - "5000:5000"
+    #   - "8090:8090"
+    environment:
+      VENDOR_HOST: sensihydro.copeland.cn
+      VENDOR_PORT: "5000"
+      LISTEN_PORT: "5000"
+      HTTP_PORT: "8090"
+      # Split DNS: only the DTU is pointed at this resolver (see docs).
+      DNS_PORT: "15353"
+      # IP address of the machine running this container
+      LAN_IP: "${LAN_IP:-192.168.1.10}"
+      DNS_UPSTREAM: "223.5.5.5,119.29.29.29"
+      LOG_LEVEL: INFO
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
