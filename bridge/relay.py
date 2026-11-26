@@ -460,65 +460,64 @@ class DtuBridge:
         self, data: bytes, client_side: bool, sel: selectors.DefaultSelector
     ) -> None:
         with self._lock:
-            if client_side:
-                buffer = self._client_buf + data
-            else:
-                buffer = self._upstream_buf + data
+            buffer = (self._client_buf if client_side else self._upstream_buf) + data
         items, rest, dropped = modbus.parse_frames(buffer)
         if dropped:
             self.desync_bytes += dropped
-            _LOGGER.debug("dropped %d desynchronised bytes from %s", dropped, "DTU" if client_side else "cloud")
+            _LOGGER.debug(
+                "dropped %d desynchronised bytes from %s",
+                dropped,
+                "DTU" if client_side else "cloud",
+            )
         if client_side:
             self.last_dtu_frame_at = time.time()
         else:
             self.last_cloud_frame_at = time.time()
+
         with self._lock:
             if client_side:
                 self._client_buf = rest
             else:
                 self._upstream_buf = rest
-            for item in items:
-                if isinstance(item, bytes):
-                    # DTU heartbeat "00<MAC>" -> relay to the cloud unchanged
-                    self.dtu_frames += 1
-                    self.dtu_heartbeats += 1
-                    self._to_upstream.extend(item)
-                    continue
-                self.dtu_frames += 1
-                late_since = self._expired.pop(item.transaction_id, None)
-                if late_since is not None:
-                    # A response that arrived after our injection timed out:
-                    # never forward it, it would be an unsolicited frame from
-                    # the vendor cloud's point of view.
-                    self.late_responses_swallowed += 1
-                    _LOGGER.debug(
-                        "swallowed late injected response tid=0x%04x",
-                        item.transaction_id,
-                    )
-                    continue
-                entry = self._pending.get(item.transaction_id)
-                if entry is not None and _matches_function(entry, item):
-                    # Answer to one of our injected requests: swallow it.
-                    entry["frame"] = item
-                    entry["event"].set()
-                    _LOGGER.debug(
-                        "injected response tid=0x%04x pdu=%s",
-                        item.transaction_id,
-                        item.pdu.hex(),
-                    )
-                    continue
-                self._to_upstream.extend(item.raw)
+
             if client_side:
-                upstream_size = len(self._to_upstream)
+                # --- DTU -> cloud ---------------------------------------
+                for item in items:
+                    if isinstance(item, bytes):
+                        # heartbeat "00<MAC>" is relayed unchanged
+                        self.dtu_frames += 1
+                        self.dtu_heartbeats += 1
+                        self._to_upstream.extend(item)
+                        continue
+                    self.dtu_frames += 1
+                    if self._expired.pop(item.transaction_id, None) is not None:
+                        # late answer of a timed-out injection: never leak it
+                        self.late_responses_swallowed += 1
+                        _LOGGER.debug(
+                            "swallowed late injected response tid=0x%04x",
+                            item.transaction_id,
+                        )
+                        continue
+                    entry = self._pending.get(item.transaction_id)
+                    if entry is not None and _matches_function(entry, item):
+                        entry["frame"] = item
+                        entry["event"].set()
+                        _LOGGER.debug(
+                            "injected response tid=0x%04x pdu=%s",
+                            item.transaction_id,
+                            item.pdu.hex(),
+                        )
+                        continue
+                    self._to_upstream.extend(item.raw)
             else:
-                upstream_size = len(self._to_client)
-        queued = len(self._to_client) + len(self._to_upstream)
-        if queued > MAX_QUEUE_BYTES or upstream_size > MAX_QUEUE_BYTES:
+                # --- cloud -> DTU ---------------------------------------
+                for item in items:
+                    self.cloud_frames += 1
+                    self._to_client.extend(item if isinstance(item, bytes) else item.raw)
+
+            queued = len(self._to_client) + len(self._to_upstream)
+        if queued > MAX_QUEUE_BYTES:
             self._drop(sel, "queue overflow")
-            return
-        if not client_side:
-            # cloud -> DTU frames were just queued in _to_client
-            pass
 
     def _flush_queues(self) -> bool:
         """Send the queued bytes; returns False when the connection is broken."""
