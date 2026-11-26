@@ -113,6 +113,13 @@ class Config:
         ]
         self.lan_ip = os.environ.get("LAN_IP") or _detect_lan_ip()
 
+        # Link watchdogs: the vendor cloud sometimes keeps the TCP connection
+        # open while it stopped polling, and the DTU can stop answering after a
+        # bus lock-up.  Both leave a "connected but dead" link, so the relay
+        # forces a reconnect after these idle periods.  0 disables a watchdog.
+        self.cloud_idle_timeout = float(os.environ.get("CLOUD_IDLE_TIMEOUT", "300"))
+        self.dtu_idle_timeout = float(os.environ.get("DTU_IDLE_TIMEOUT", "180"))
+
     def __repr__(self) -> str:  # pragma: no cover
         return "<Config dtup=%s:%d http=%d vendor=%s:%d>" % (
             self.listen_host,

@@ -11,7 +11,13 @@ The DTU also sends a 14 byte ASCII heartbeat "00<MAC>" on the same socket
 
 from __future__ import annotations
 
+import re
+
 HEARTBEAT_PREFIX = b"00"
+#: ASCII heartbeat sent by the HF5111B: "00" + 12 hex chars (+ optional CR/LF)
+_HEARTBEAT_RE = re.compile(rb"^00[0-9A-Fa-f]{12}(?:\r\n|\r|\n)?")
+#: MBAP frames are small; anything larger means the stream is desynchronised
+_MAX_MBAP_LENGTH = 260
 
 FUNC_READ_HOLDING = 0x03
 FUNC_READ_INPUT = 0x04
@@ -102,32 +108,43 @@ class Frame:
         return "<Frame tid=0x%04x pdu=%s>" % (self.transaction_id, self.pdu.hex())
 
 
-def parse_frames(buffer: bytes) -> tuple[list[Frame | bytes], bytes]:
+def parse_frames(buffer: bytes) -> tuple[list[Frame | bytes], bytes, int]:
     """Split a byte stream into frames.
 
-    Returns ``(items, remaining)`` where items contains :class:`Frame` objects
-    and raw ``bytes`` for DTU heartbeats.
+    Returns ``(items, remaining, dropped_bytes)`` where ``items`` contains
+    :class:`Frame` objects and raw ``bytes`` for DTU heartbeats.  ``dropped``
+    counts bytes that had to be discarded to resynchronise after garbage; those
+    are never forwarded to the vendor cloud (that used to be able to confuse
+    the vendor session).
     """
     items: list[Frame | bytes] = []
-    while len(buffer) >= 6:
-        # DTU heartbeat: ASCII "00" + 12 char MAC
-        if buffer[0:2] == HEARTBEAT_PREFIX:
-            end = buffer.find(b"\r", 14)
-            if len(buffer) < 14:
+    dropped = 0
+    while True:
+        valid_mbap = False
+        length = 0
+        if len(buffer) >= 6:
+            protocol = (buffer[2] << 8) | buffer[3]
+            length = (buffer[4] << 8) | buffer[5]
+            valid_mbap = protocol == 0 and 2 <= length <= _MAX_MBAP_LENGTH
+        if valid_mbap:
+            total = 6 + length
+            if len(buffer) < total:
                 break
-            items.append(buffer[:14])
-            buffer = buffer[14:]
+            transaction_id = (buffer[0] << 8) | buffer[1]
+            items.append(Frame(buffer[:total], transaction_id, buffer[6:total]))
+            buffer = buffer[total:]
             continue
-        length = (buffer[4] << 8) | buffer[5]
-        if length > 4096:
-            # desynchronised: drop one byte and resynchronise
-            items.append(b"\x00")
-            buffer = buffer[1:]
+        # Not a valid MBAP frame: maybe the DTU heartbeat, maybe garbage.
+        match = _HEARTBEAT_RE.match(buffer)
+        if match is not None:
+            items.append(buffer[: match.end()])
+            buffer = buffer[match.end():]
             continue
-        total = 6 + length
-        if len(buffer) < total:
+        if buffer[:2] == HEARTBEAT_PREFIX and len(buffer) < 14:
+            # possibly an incomplete heartbeat: wait for the rest
             break
-        transaction_id = (buffer[0] << 8) | buffer[1]
-        items.append(Frame(buffer[:total], transaction_id, buffer[6:total]))
-        buffer = buffer[total:]
-    return items, buffer
+        if len(buffer) < 6:
+            break
+        buffer = buffer[1:]
+        dropped += 1
+    return items, buffer, dropped

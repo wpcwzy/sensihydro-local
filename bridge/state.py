@@ -24,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 class StateStore:
     """Cached unit/host-mode snapshot with a lazy background refresher."""
 
-    def __init__(self, bridge, interval: float = 3.5, active_window: float = 45.0) -> None:
+    def __init__(self, bridge, interval: float = 5.0, active_window: float = 8.0) -> None:
         self.bridge = bridge
         # A full refresh costs ~2.5 s on the RS485 bus, so keep the duty cycle
         # moderate: poll only while a UI/HA client has been active recently.

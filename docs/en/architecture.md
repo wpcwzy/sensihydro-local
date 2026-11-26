@@ -114,6 +114,28 @@ To keep the history graphs continuous:
 - after a restart the previous state is restored via `RestoreEntity`, so restarts do not
   create gaps either.
 
+## Link robustness (watchdogs & fail-safes)
+
+The chain is a transparent relay (DTU ⇄ bridge ⇄ vendor cloud), so either side can go
+silent while the TCP connection stays up. The bridge therefore protects itself:
+
+| Mechanism | Behaviour |
+|---|---|
+| **Cloud-idle watchdog** | no bytes from the vendor cloud for 300 s (with the connection still open) → drop it, so the DTU reconnects and re-registers with the cloud |
+| **DTU-idle watchdog** | no bytes from the DTU for 180 s (heartbeats included) → drop and wait for a reconnect |
+| **Stream validation** | a frame is only trusted when the MBAP header is valid (protocol 0, sane length); garbage bytes are dropped and counted, never forwarded to the cloud (they can poison the vendor session) |
+| **Heartbeat detection** | `00` + 12 hex chars (optional CRLF) is relayed as a DTU heartbeat; a valid Modbus frame whose transaction id starts with `0x00` is not mistaken for one |
+| **Late-response swallowing** | when an injected request timed out, its late answer is dropped instead of leaking to the vendor as an unsolicited frame |
+| **Injection TID check** | a response is only consumed when both transaction id and function code match |
+| **Queue cap** | more than 1 MB pending in either direction → drop and reconnect instead of growing memory |
+| **Send errors** | any send error drops the connection; the watchdogs/reconnect logic recover |
+
+The bus load was also reduced: the state snapshot refreshes every 5 s only while an API client
+is active (8 s window) and stops completely when idle, so it cannot starve the DTU heartbeat.
+
+> If `/health` shows a growing `cloud_idle_drops` while `cloud_frames` stays frozen, the vendor
+> cloud is refusing to resume polling; power-cycle the heat pump (DTU) once so it re-registers.
+
 ## Ports
 
 | Port | Listener | Notes |

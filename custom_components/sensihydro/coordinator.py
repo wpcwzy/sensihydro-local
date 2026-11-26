@@ -24,6 +24,14 @@ from . import hostmode, outdoor
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _to_int(value: Any) -> int | None:
+    """Best effort conversion of a cloud string/number to int."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 type SensiHydroConfigEntry = ConfigEntry[SensiHydroCoordinator]
 
 def _local_unit_parameter_values(local: dict[str, Any]) -> dict[str, str]:
@@ -52,6 +60,15 @@ def _local_unit_parameter_values(local: dict[str, Any]) -> dict[str, str]:
 # The slow-changing data (run-time parameter table, schedules, notices, ...)
 # is refreshed at most every 5 minutes instead of on every poll.
 EXTRA_UPDATE_INTERVAL = 300
+
+# The cloud database only updates a unit's on/off state when the command comes
+# through its own API.  Local (Modbus) writes are invisible to it, so the
+# official app keeps showing the old state.  We therefore mirror LAN-side
+# changes through the cloud API, but only after the mismatch persisted for a
+# while (a cloud/app command takes a few tens of seconds to reach the unit and
+# must not be fought by the reconciliation).
+RECONCILE_PERSIST_SECONDS = 180
+RECONCILE_COOLDOWN_SECONDS = 300
 
 
 class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
@@ -85,6 +102,12 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         self.device_name = device_name
         self.nominal_voltage = nominal_voltage
         self.gateway_online: bool | None = None
+        # name -> (cloud status, cloud mode) captured before the LAN overlay
+        self._cloud_snapshot: dict[str, tuple[int | None, int | None]] = {}
+        # unit key -> (mismatch signature, first seen monotonic timestamp)
+        self._cloud_mismatch: dict[str, tuple[tuple, float]] = {}
+        # unit key -> last time we pushed a mirrored state to the cloud
+        self._reconciled_at: dict[str, float] = {}
 
         # Local LAN bridge (docker container). When reachable it provides
         # real-time state and direct control through the DTU's Modbus/TCP
@@ -158,6 +181,9 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         # from the controller (the cloud table is only a cached snapshot).
         await self._async_apply_local_parameters(data)
 
+        # Push LAN-side state changes to the cloud so the official app agrees.
+        self._schedule_cloud_reconcile(units)
+
         return data
 
     async def _async_apply_local_parameters(
@@ -192,6 +218,97 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                 if isinstance(param, dict):
                     param["value"] = value
 
+    def _schedule_cloud_reconcile(self, units: list[dict[str, Any]]) -> None:
+        """Mirror LAN-side state changes into the vendor cloud.
+
+        The vendor cloud only refreshes a unit's on/off state when a command
+        arrives through its own API; raw Modbus writes through the LAN bridge
+        are invisible to it, so the official app would keep showing the old
+        state.  A mismatch is mirrored only after it has persisted for
+        ``RECONCILE_PERSIST_SECONDS`` (so a command issued in the app, which
+        needs a few tens of seconds to reach the unit, is never fought).
+        """
+        if not self.local_available or not self.local_units:
+            return
+        if self.gateway_online is False:
+            return
+        now = time.monotonic()
+        for unit in units:
+            name = str(unit.get("name") or "")
+            local = self.local_units.get(name)
+            if not local:
+                continue
+            unit_key = str(unit.get("id") or name)
+            local_power = 1 if local.get("power") else 0
+            local_mode = local.get("mode")
+            cloud = self._cloud_snapshot.get(name)
+            if cloud is None:
+                continue
+            cloud_power, cloud_mode = cloud
+            power_differs = cloud_power is not None and cloud_power != local_power
+            mode_differs = (
+                local_power == 1
+                and local_mode is not None
+                and cloud_mode is not None
+                and cloud_mode != int(local_mode)
+            )
+            signature = (cloud_power, local_power, cloud_mode, local_mode)
+            if not power_differs and not mode_differs:
+                self._cloud_mismatch.pop(unit_key, None)
+                continue
+            previous = self._cloud_mismatch.get(unit_key)
+            if previous is None or previous[0] != signature:
+                self._cloud_mismatch[unit_key] = (signature, now)
+                continue
+            if now - previous[1] < RECONCILE_PERSIST_SECONDS:
+                continue
+            if now - self._reconciled_at.get(unit_key, 0.0) < RECONCILE_COOLDOWN_SECONDS:
+                continue
+            self._reconciled_at[unit_key] = now
+            self._cloud_mismatch.pop(unit_key, None)
+            self.hass.async_create_task(
+                self._async_push_cloud_state(unit, local, power_differs, mode_differs)
+            )
+
+    async def _async_push_cloud_state(
+        self,
+        unit: dict[str, Any],
+        local: dict[str, Any],
+        power_differs: bool,
+        mode_differs: bool,
+    ) -> None:
+        """Send the controller state to the cloud API (best effort)."""
+        name = unit.get("name")
+        try:
+            if power_differs:
+                await self.client.async_set_power(
+                    self.device_id,
+                    self.device_serialno,
+                    unit,
+                    bool(local.get("power")),
+                )
+                _LOGGER.info(
+                    "SensiHydro: mirrored power=%s of %s to the cloud",
+                    local.get("power"),
+                    name,
+                )
+            if mode_differs:
+                await self.client.async_set_mode(
+                    self.device_id,
+                    self.device_serialno,
+                    unit,
+                    int(local.get("mode")),
+                )
+                _LOGGER.info(
+                    "SensiHydro: mirrored mode=%s of %s to the cloud",
+                    local.get("mode"),
+                    name,
+                )
+        except SensiHydroAuthError:
+            pass
+        except (SensiHydroApiError, SensiHydroConnectionError) as err:
+            _LOGGER.debug("SensiHydro: cloud mirror for %s failed: %s", name, err)
+
     async def _async_update_local(self, units: list[dict[str, Any]]) -> None:
         """Read the LAN bridge and overlay the live state onto the cloud data."""
         if self._local is None:
@@ -205,6 +322,16 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             return
         self.local_available = True
         self.local_units = local_units
+        # Remember what the cloud claimed before the live values are overlaid
+        # (the overlay replaces status/mode, but reconciliation needs the
+        # original cloud view to detect a mismatch).
+        self._cloud_snapshot = {
+            str(unit.get("name") or ""): (
+                _to_int(unit.get("status")),
+                _to_int(unit.get("mode")),
+            )
+            for unit in units
+        }
         try:
             self.host_mode_detail = await hostmode.async_read_host_mode(self._local)
             self.host_mode = self.host_mode_detail.get("mode")

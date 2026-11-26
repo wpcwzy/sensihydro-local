@@ -44,6 +44,8 @@ def main() -> int:
         vendor_port=config.vendor_port,
         listen_host=config.listen_host,
         listen_port=config.listen_port,
+        cloud_idle_timeout=config.cloud_idle_timeout,
+        dtu_idle_timeout=config.dtu_idle_timeout,
     )
     bridge.start()
 
