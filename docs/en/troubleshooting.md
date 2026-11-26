@@ -52,3 +52,54 @@ docker compose down
 
 > If DNS still points at the bridge while the container is down, the DTU cannot connect and
 > the app shows the device offline — undo the DNS entry first, or start the container again.
+
+## Why does the DTU bypass the bridge after a Docker upgrade? (important)
+
+The DTU is steered to the bridge by DNS: AdGuard forwards this client's lookups to the bridge's
+built-in DNS (`192.168.110.28:15353`).  While Docker is being upgraded or the container is
+rebuilt, that upstream is briefly unavailable and AdGuard **falls back to public DNS** -- the DTU
+learns the real vendor address, connects straight to the vendor cloud and keeps that connection.
+When the bridge comes back it is not re-connected; only a DTU power cycle helps.  Symptom: **the
+app works, local control / HA is dead**.
+
+### Permanent fixes (recommended order)
+
+1. **Block the DTU from the internet on the router (most complete).**
+   In the router's device / access-control page deny internet access for `192.168.110.3`, keeping
+   LAN access.  The DTU can then never reach the vendor: while the bridge is down it just keeps
+   retrying and reconnects as soon as the bridge is back.  (The app keeps working, its traffic is
+   relayed through the bridge anyway.)
+
+2. **Move the DNS answer onto the NAS host (outside Docker).**
+   Install the responder from `tools/host_dns.py` via `deploy/install_host_dns.sh`:
+
+   ```bash
+   # as root on the NAS, after unpacking the deployment bundle
+   sh deploy/install_host_dns.sh 192.168.110.28
+   # then switch the AC-DTU client upstream in AdGuard from 192.168.110.28:15353 to 192.168.110.28:53
+   ```
+
+3. **Enable Docker live-restore** (`/etc/docker/daemon.json`: `{"live-restore": true}`, then
+   `systemctl restart docker`) so engine restarts/upgrades keep containers running.
+
+> If the DTU already went straight to the vendor, apply one of the fixes above and power-cycle the
+> heat pump (DTU) once.
+
+### Optional offline notification
+
+`binary_sensor.ao_yuan_120_2_ben_di_qiao_jie` turns `off` when the bridge is unreachable:
+
+```yaml
+automation:
+  - alias: AC local bridge offline
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ao_yuan_120_2_ben_di_qiao_jie
+        to: "off"
+        for: "00:05:00"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: AC local bridge offline
+          message: The bridge has been unreachable for 5 minutes; after a Docker upgrade the DTU may have fallen back to the vendor cloud -- power-cycle the heat pump when convenient.
+```

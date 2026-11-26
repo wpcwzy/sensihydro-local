@@ -52,3 +52,53 @@ docker compose down
 
 > 如果 DNS 还指向 bridge 而容器停了，DTU 会连不上、App 显示离线；
 > 先撤 DNS 或重新启动容器。
+
+## 为什么 Docker 升级后 DTU 会绕过 bridge？（重要）
+
+DTU 靠 DNS 被引导到 bridge：AdGuard 把这个客户端（`192.168.110.3`）的解析转发给 bridge 内置 DNS
+（`192.168.110.28:15353`）。Docker 引擎升级 / 容器重建时 bridge 会短暂消失，AdGuard 在内置 DNS
+不可用时**回退到公共 DNS**，DTU 于是拿到厂商真实地址、直接连到厂商云，并会一直保持这条连接——
+bridge 再起来也叫不回来，只能给 DTU 断电重启。表现为：**App 正常，但本地遥控/HA 全部失灵**。
+
+### 根治办法（按推荐顺序）
+
+1. **路由器上禁止 DTU 上网（最彻底）**
+   在路由器"设备管理 / 上网管控"里把 DTU（`192.168.110.3`）设为禁止访问外网、只允许局域网。
+   DTU 就永远不可能直连厂商；bridge 重启期间它连不上任何地方、只会不停重试，
+   bridge 一恢复就自动连回来。（App 仍正常：App 的数据本来就经 bridge 转发到厂商云。）
+
+2. **把 DNS 应答搬到 NAS 宿主机（不依赖 Docker）**
+   用本仓库的 `tools/host_dns.py` + `deploy/install_host_dns.sh` 装一个 systemd 服务：
+
+   ```bash
+   # 解压部署包后，在 NAS 上以 root 执行
+   sh deploy/install_host_dns.sh 192.168.110.28
+   # 再把 AdGuard 里 AC-DTU 客户端的上游从 192.168.110.28:15353 改成 192.168.110.28:53
+   ```
+
+   这样即使以后重建 bridge、升级 Docker，DTU 也总能解析到 NAS IP。
+
+3. **给 Docker 开 live-restore（减少重启影响）**
+   NAS 的 `/etc/docker/daemon.json` 加入 `{ "live-restore": true }` 后 `systemctl restart docker`；
+   之后重启/升级 Docker 引擎时容器保持运行（对 `docker compose up --build` 不生效）。
+
+> 已经绕回厂商云时：先按上面任一项修好，再给空调主控板断电重启一次让 DTU 重新注册。
+
+### 掉线提醒（可选）
+
+bridge 掉线时 `binary_sensor.ao_yuan_120_2_ben_di_qiao_jie` 会变成 `off`，可以加一条自动化：
+
+```yaml
+automation:
+  - alias: 空调本地桥接离线提醒
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ao_yuan_120_2_ben_di_qiao_jie
+        to: "off"
+        for: "00:05:00"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: 空调本地桥接离线
+          message: 已 5 分钟未连上本地 bridge；若刚升级过 Docker，DTU 可能已绕回厂商云，必要时给空调主控板断电重启一次。
+```
