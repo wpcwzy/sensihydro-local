@@ -14,6 +14,21 @@ jobs:
           python-version: "3.12"
       - name: Byte-compile all Python files
         run: python -m compileall -q bridge custom_components tools extras
+      - name: Smoke test bridge startup
+        env:
+          VENDOR_IP: 127.0.0.1
+          VENDOR_PORT: "15999"
+          LISTEN_PORT: "15099"
+          HTTP_PORT: "18099"
+          DNS_PORT: "0"
+        run: |
+          python -m bridge.main &
+          BRIDGE_PID=$!
+          sleep 4
+          curl -sf http://127.0.0.1:18099/health
+          curl -sf http://127.0.0.1:18099/api/mapping
+          kill "$BRIDGE_PID"
+
       - name: Validate JSON files
         run: |
           python - <<'PY'
