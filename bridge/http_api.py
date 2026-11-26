@@ -55,6 +55,25 @@ class SensiHydroApi:
             if path in ("/health", "/api/status"):
                 return handler.send_json({"ok": True, **self.bridge.status()})
 
+            if path == "/api/mapping":
+                state, _host, _age = self.store.get()
+                entries = []
+                for item in units.mapping():
+                    unit = state.get(item["name"]) or {}
+                    firmware = unit.get("firmware") or {}
+                    entries.append(
+                        {
+                            **item,
+                            "identity_code": [
+                                firmware.get("code_high"),
+                                firmware.get("code_middle"),
+                                firmware.get("code_low"),
+                            ],
+                            "room_temperature": unit.get("room_temperature"),
+                        }
+                    )
+                return handler.send_json({"ok": True, "units": entries})
+
             if path == "/api/hostmode":
                 if handler.command == "GET":
                     return handler.send_json(

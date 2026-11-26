@@ -90,7 +90,28 @@ The cloud parameter table's `val200..val210` and `val213` mirror the state block
 valve, fan rpm, wired-controller room temperature). The HA integration overlays them with
 live local values, so those sensors are real-time.
 
-## 6. Discovering your own layout
+## 6. Default mapping and verification (important)
+
+The default room -> slot mapping is verified, not guessed: the unique identity
+code of every indoor board (state block +2/+3/+4) is matched against the
+per-room identity codes reported by the vendor cloud.
+
+| Room | Slot | State block | Control block |
+|---|---|---|---|
+| 餐厅 (dining) | 1 | `0x00C8` | `0x03E8` |
+| 三楼南 | 2 | `0x00DC` | `0x03F7` |
+| 二楼南 | 4 | `0x0104` | `0x0415` |
+| 三楼北 | 5 | `0x0118` | `0x0424` |
+| 客厅 (living) | 6 | `0x012C` | `0x0433` |
+| 二楼北 | 7 | `0x0140` | `0x0442` |
+
+After installation open `http://<bridge>:8090/api/mapping`: it lists the mapping in
+use plus each board's identity code, so a mix-up is visible immediately.
+A wrong mapping shows up as "tapping room A turns on room B".
+
+Custom mapping: edit `examples/units.example.json` and point `UNITS_FILE` at it.
+
+## 7. Discovering your own layout
 
 1. confirm connectivity: `curl 'http://<bridge>:8090/api/read?addr=0x00c8&count=20'`;
 2. find slots: read from `0x00C8` in steps of 20 and look for plausible

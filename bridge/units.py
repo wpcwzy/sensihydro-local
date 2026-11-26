@@ -54,8 +54,16 @@ class UnitDef:
 #
 #     [{"name": "living_room", "sequence": 5},
 #      {"name": "bedroom", "sequence": 2, "state_base": "0x00DC"}]
-DEFAULT_UNIT_NAMES = ["客厅", "二楼南", "三楼南", "二楼北", "三楼北", "餐厅"]
-DEFAULT_UNIT_SEQUENCES = [5, 2, 1, 6, 7, 4]
+#: name -> controller slot (1-based).  Verified against the unique identity
+#: codes of each indoor board (state block +2/+3/+4); see docs/registers.md.
+DEFAULT_UNITS: dict[str, int] = {
+    "餐厅": 1,
+    "三楼南": 2,
+    "二楼南": 4,
+    "三楼北": 5,
+    "客厅": 6,
+    "二楼北": 7,
+}
 
 
 def _number(value, default: int | None = None) -> int:
@@ -68,14 +76,14 @@ def _number(value, default: int | None = None) -> int:
     return int(value)
 
 
-def _build_units(names: list[str], sequences: list[int]) -> dict[str, UnitDef]:
+def _build_units(mapping: dict[str, int]) -> dict[str, UnitDef]:
     units: dict[str, UnitDef] = {}
-    for index, (name, sequence) in enumerate(zip(names, sequences)):
+    for name, slot in mapping.items():
         units[name] = UnitDef(
             name=name,
-            state_base=0x00C8 + 20 * (sequence - 1),
-            ctrl_base=0x03E8 + 15 * (sequence - 1),
-            sequence=sequence,
+            state_base=0x00C8 + 20 * (slot - 1),
+            ctrl_base=0x03E8 + 15 * (slot - 1),
+            sequence=slot,
         )
     return units
 
@@ -84,7 +92,7 @@ def _load_units() -> dict[str, UnitDef]:
     """Load the unit map from ``UNITS_FILE`` or fall back to the defaults."""
     path = os.environ.get("UNITS_FILE")
     if not path:
-        return _build_units(DEFAULT_UNIT_NAMES, DEFAULT_UNIT_SEQUENCES)
+        return _build_units(DEFAULT_UNITS)
     with open(path, encoding="utf-8") as handle:
         entries = json.load(handle)
     units: dict[str, UnitDef] = {}
@@ -101,6 +109,19 @@ def _load_units() -> dict[str, UnitDef]:
 
 
 UNITS: dict[str, UnitDef] = _load_units()
+
+
+def mapping() -> list[dict]:
+    """Describe the configured unit map (for diagnostics / verification)."""
+    return [
+        {
+            "name": unit.name,
+            "slot": unit.sequence,
+            "state_base": "0x%04X" % unit.state_base,
+            "ctrl_base": "0x%04X" % unit.ctrl_base,
+        }
+        for unit in UNITS.values()
+    ]
 
 # Aliases so callers can use pinyin / english keys as well.
 ALIASES: dict[str, str] = {

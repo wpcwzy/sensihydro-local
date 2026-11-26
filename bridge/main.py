@@ -48,6 +48,11 @@ def main() -> int:
         dtu_idle_timeout=config.dtu_idle_timeout,
     )
     bridge.start()
+    for item in __import__("bridge.units", fromlist=["mapping"]).mapping():
+        _LOGGER.info(
+            "unit %s -> slot %s (state %s, control %s)",
+            item["name"], item["slot"], item["state_base"], item["ctrl_base"],
+        )
 
     dns: DnsServer | None = None
     if config.dns_port:
