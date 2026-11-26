@@ -114,6 +114,25 @@ To keep the history graphs continuous:
 - after a restart the previous state is restored via `RestoreEntity`, so restarts do not
   create gaps either.
 
+## Cloud reconciliation (LAN → cloud)
+
+The vendor cloud only updates a unit's state when the command comes through **its own API**;
+raw Modbus writes through the bridge are invisible to it, so the official app keeps showing
+the old state ("turned it on in HA, the app still says off").
+
+Every coordinator poll therefore compares the controller state with the cloud record and,
+when a mismatch persists for **3 minutes** (so a command just issued in the app is not fought),
+mirrors the local state through the cloud API — at most once per 5 minutes per unit:
+
+| Item | Behaviour |
+|---|---|
+| Power | cloud `status` differs → cloud `modifyVal=1` |
+| Mode | differs while the unit is on → cloud `modifyVal=2` |
+| Target temperature | differs while the unit is on → cloud `modifyVal=4` (exact value via flag+base; the cloud rejects setpoints while off) |
+
+Only one item per unit per cycle is mirrored, so the states converge one after another;
+the actions are logged (`mirrored ...`).
+
 ## Link robustness (watchdogs & fail-safes)
 
 The chain is a transparent relay (DTU ⇄ bridge ⇄ vendor cloud), so either side can go

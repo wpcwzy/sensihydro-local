@@ -17,12 +17,21 @@ from .api import (
     SensiHydroAuthError,
     SensiHydroClient,
     SensiHydroConnectionError,
+    SensiHydroWriteError,
 )
 from .const import DEFAULT_NOMINAL_VOLTAGE, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .local_api import LocalApiClient, LocalApiError
 from . import hostmode, outdoor
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _to_float(value: Any) -> float | None:
+    """Best effort conversion of a cloud string/number to float."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _to_int(value: Any) -> int | None:
@@ -103,7 +112,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         self.nominal_voltage = nominal_voltage
         self.gateway_online: bool | None = None
         # name -> (cloud status, cloud mode) captured before the LAN overlay
-        self._cloud_snapshot: dict[str, tuple[int | None, int | None]] = {}
+        self._cloud_snapshot: dict[str, tuple[int | None, int | None, float | None]] = {}
         # unit key -> (mismatch signature, first seen monotonic timestamp)
         self._cloud_mismatch: dict[str, tuple[tuple, float]] = {}
         # unit key -> last time we pushed a mirrored state to the cloud
@@ -244,7 +253,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             cloud = self._cloud_snapshot.get(name)
             if cloud is None:
                 continue
-            cloud_power, cloud_mode = cloud
+            cloud_power, cloud_mode, cloud_target = cloud
             power_differs = cloud_power is not None and cloud_power != local_power
             mode_differs = (
                 local_power == 1
@@ -252,8 +261,22 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                 and cloud_mode is not None
                 and cloud_mode != int(local_mode)
             )
-            signature = (cloud_power, local_power, cloud_mode, local_mode)
-            if not power_differs and not mode_differs:
+            local_target = _to_float(local.get("target_temperature"))
+            temp_differs = (
+                local_power == 1
+                and local_target is not None
+                and cloud_target is not None
+                and abs(cloud_target - local_target) >= 0.25
+            )
+            signature = (
+                cloud_power,
+                local_power,
+                cloud_mode,
+                local_mode,
+                cloud_target,
+                local_target,
+            )
+            if not power_differs and not mode_differs and not temp_differs:
                 self._cloud_mismatch.pop(unit_key, None)
                 continue
             previous = self._cloud_mismatch.get(unit_key)
@@ -267,7 +290,9 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             self._reconciled_at[unit_key] = now
             self._cloud_mismatch.pop(unit_key, None)
             self.hass.async_create_task(
-                self._async_push_cloud_state(unit, local, power_differs, mode_differs)
+                self._async_push_cloud_state(
+                    unit, local, power_differs, mode_differs, temp_differs
+                )
             )
 
     async def _async_push_cloud_state(
@@ -276,6 +301,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         local: dict[str, Any],
         power_differs: bool,
         mode_differs: bool,
+        temp_differs: bool = False,
     ) -> None:
         """Send the controller state to the cloud API (best effort)."""
         name = unit.get("name")
@@ -292,7 +318,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                     local.get("power"),
                     name,
                 )
-            if mode_differs:
+            elif mode_differs:
                 await self.client.async_set_mode(
                     self.device_id,
                     self.device_serialno,
@@ -304,9 +330,23 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                     local.get("mode"),
                     name,
                 )
+            elif temp_differs:
+                # The cloud only accepts setpoint writes while the unit is on,
+                # and this call also verifies the new value.
+                await self.client.async_set_temperature(
+                    self.device_id,
+                    self.device_serialno,
+                    unit,
+                    float(local.get("target_temperature")),
+                )
+                _LOGGER.info(
+                    "SensiHydro: mirrored target %.1f of %s to the cloud",
+                    float(local.get("target_temperature")),
+                    name,
+                )
         except SensiHydroAuthError:
             pass
-        except (SensiHydroApiError, SensiHydroConnectionError) as err:
+        except (SensiHydroApiError, SensiHydroConnectionError, SensiHydroWriteError) as err:
             _LOGGER.debug("SensiHydro: cloud mirror for %s failed: %s", name, err)
 
     async def _async_update_local(self, units: list[dict[str, Any]]) -> None:
@@ -329,6 +369,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             str(unit.get("name") or ""): (
                 _to_int(unit.get("status")),
                 _to_int(unit.get("mode")),
+                _to_float(unit.get("targetTemperature")),
             )
             for unit in units
         }
