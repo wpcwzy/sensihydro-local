@@ -23,6 +23,7 @@ from .config import Config
 from .dnsd import DnsServer
 from .http_api import create_server
 from .relay import DtuBridge
+from .units import mapping as unit_mapping
 
 
 def _setup_logging(level: str) -> None:
@@ -48,8 +49,8 @@ def main() -> int:
         dtu_idle_timeout=config.dtu_idle_timeout,
     )
     bridge.start()
-    for item in __import__("bridge.units", fromlist=["mapping"]).mapping():
-        _LOGGER.info(
+    for item in unit_mapping():
+        log.info(
             "unit %s -> slot %s (state %s, control %s)",
             item["name"], item["slot"], item["state_base"], item["ctrl_base"],
         )

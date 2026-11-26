@@ -56,7 +56,10 @@ class SensiHydroApi:
                 return handler.send_json({"ok": True, **self.bridge.status()})
 
             if path == "/api/mapping":
-                state, _host, _age = self.store.get()
+                try:
+                    state, _host, _age = self.store.get()
+                except Exception:  # noqa: BLE001 - still report the mapping
+                    state = {}
                 entries = []
                 for item in units.mapping():
                     unit = state.get(item["name"]) or {}
