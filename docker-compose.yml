@@ -26,8 +26,9 @@ services:
       HTTP_PORT: "8090"
       # Split DNS: only the DTU is pointed at this resolver (see docs).
       DNS_PORT: "15353"
-      # IP address of the machine running this container
-      LAN_IP: "${LAN_IP:-192.168.1.10}"
+      # IP address of the machine running this container.  Leave empty to
+      # auto-detect; a wrong value is detected and ignored automatically.
+      LAN_IP: "${LAN_IP:-}"
       DNS_UPSTREAM: "223.5.5.5,119.29.29.29"
       LOG_LEVEL: INFO
       # Link watchdogs (seconds): force a reconnect when the vendor cloud or

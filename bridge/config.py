@@ -51,6 +51,22 @@ def _dns_query_a(server: str, host: str, timeout: float = 2.5) -> str | None:
     return None
 
 
+def _is_local_ip(address: str) -> bool:
+    """Return True when ``address`` is one of this host's IPv4 addresses."""
+    try:
+        socket.inet_aton(address)
+    except OSError:
+        return False
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind((address, 0))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def _detect_lan_ip() -> str:
     """Best effort: the LAN address of this host (used for the DNS hijack)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -111,7 +127,22 @@ class Config:
             for part in os.environ.get("DNS_UPSTREAM", "223.5.5.5").split(",")
             if part.strip()
         ]
-        self.lan_ip = os.environ.get("LAN_IP") or _detect_lan_ip()
+        # LAN_IP is the address the DTU must connect to.  A wrong/placeholder
+        # value would make the built-in DNS answer an unreachable address and
+        # the DTU would never reach the bridge, so verify it against the
+        # host's own addresses and fall back to auto-detection.
+        configured_lan_ip = os.environ.get("LAN_IP", "").strip()
+        detected_lan_ip = _detect_lan_ip()
+        if configured_lan_ip and _is_local_ip(configured_lan_ip):
+            self.lan_ip = configured_lan_ip
+        else:
+            if configured_lan_ip:
+                logging.getLogger(__name__).warning(
+                    "LAN_IP=%s is not an address of this host; using %s instead",
+                    configured_lan_ip,
+                    detected_lan_ip,
+                )
+            self.lan_ip = detected_lan_ip
 
         # Link watchdogs: the vendor cloud sometimes keeps the TCP connection
         # open while it stopped polling, and the DTU can stop answering after a
