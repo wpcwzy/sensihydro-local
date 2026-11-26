@@ -70,14 +70,19 @@ app works, local control / HA is dead**.
    retrying and reconnects as soon as the bridge is back.  (The app keeps working, its traffic is
    relayed through the bridge anyway.)
 
-2. **Move the DNS answer onto the NAS host (outside Docker).**
-   Install the responder from `tools/host_dns.py` via `deploy/install_host_dns.sh`:
+2. **Move the DNS answer onto the AdGuard host (outside Docker, recommended).**
+   On the always-on machine that runs AdGuard Home (here `192.168.110.92`, Armbian):
 
    ```bash
-   # as root on the NAS, after unpacking the deployment bundle
-   sh deploy/install_host_dns.sh 192.168.110.28
-   # then switch the AC-DTU client upstream in AdGuard from 192.168.110.28:15353 to 192.168.110.28:53
+   # as root on the AdGuard host, after unpacking the deployment bundle
+   sh deploy/install_host_dns.sh 192.168.110.28 5333
+   # then set the AC-DTU client upstream in AdGuard Home to 127.0.0.1:5333
    ```
+
+   The answer no longer depends on the NAS or Docker: during Docker upgrades, bridge rebuilds
+   and even NAS reboots the DTU only ever resolves to the NAS IP, keeps retrying and reconnects
+   as soon as the bridge is back.  (The service can also live on the NAS host; then use
+   `192.168.110.28:5333` as the AdGuard upstream.)
 
 3. **Enable Docker live-restore** (`/etc/docker/daemon.json`: `{"live-restore": true}`, then
    `systemctl restart docker`) so engine restarts/upgrades keep containers running.

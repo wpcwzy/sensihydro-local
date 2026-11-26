@@ -67,16 +67,18 @@ bridge 再起来也叫不回来，只能给 DTU 断电重启。表现为：**App
    DTU 就永远不可能直连厂商；bridge 重启期间它连不上任何地方、只会不停重试，
    bridge 一恢复就自动连回来。（App 仍正常：App 的数据本来就经 bridge 转发到厂商云。）
 
-2. **把 DNS 应答搬到 NAS 宿主机（不依赖 Docker）**
-   用本仓库的 `tools/host_dns.py` + `deploy/install_host_dns.sh` 装一个 systemd 服务：
+2. **把 DNS 应答搬到 AdGuard 那台机器上（不依赖 Docker，推荐）**
+   AdGuard 所在的常开设备（本方案里是 `192.168.110.92`，Armbian）跑一个 systemd 服务：
 
    ```bash
-   # 解压部署包后，在 NAS 上以 root 执行
-   sh deploy/install_host_dns.sh 192.168.110.28
-   # 再把 AdGuard 里 AC-DTU 客户端的上游从 192.168.110.28:15353 改成 192.168.110.28:53
+   # 解压部署包后，在 AdGuard 那台机器上以 root 执行
+   sh deploy/install_host_dns.sh 192.168.110.28 5333
+   # 然后把 AdGuard 里 AC-DTU 客户端的上游改成 127.0.0.1:5333
    ```
 
-   这样即使以后重建 bridge、升级 Docker，DTU 也总能解析到 NAS IP。
+   这样 DNS 应答完全不经过 NAS / Docker：Docker 升级、bridge 重建、甚至 NAS 重启期间，
+   DTU 都只会解析到 NAS IP、连不上就一直重试，bridge 一恢复就自动连回来。
+   （也可以把服务装在 NAS 宿主机上，此时 AdGuard 上游填 `192.168.110.28:5333`。）
 
 3. **给 Docker 开 live-restore（减少重启影响）**
    NAS 的 `/etc/docker/daemon.json` 加入 `{ "live-restore": true }` 后 `systemctl restart docker`；
