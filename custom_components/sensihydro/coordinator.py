@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -77,7 +78,7 @@ EXTRA_UPDATE_INTERVAL = 300
 # while (a cloud/app command takes a few tens of seconds to reach the unit and
 # must not be fought by the reconciliation).
 RECONCILE_PERSIST_SECONDS = 180
-RECONCILE_COOLDOWN_SECONDS = 300
+RECONCILE_COOLDOWN_SECONDS = 180
 
 
 class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
@@ -305,49 +306,53 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
     ) -> None:
         """Send the controller state to the cloud API (best effort)."""
         name = unit.get("name")
+        async def _attempt(label, coro):
+            try:
+                await coro
+            except SensiHydroAuthError:
+                raise
+            except (SensiHydroApiError, SensiHydroConnectionError, SensiHydroWriteError) as err:
+                _LOGGER.debug("SensiHydro: cloud mirror (%s) for %s failed: %s", label, name, err)
+                return False
+            _LOGGER.info("SensiHydro: mirrored %s of %s to the cloud", label, name)
+            return True
+
         try:
             if power_differs:
-                await self.client.async_set_power(
-                    self.device_id,
-                    self.device_serialno,
-                    unit,
-                    bool(local.get("power")),
+                await _attempt(
+                    f"power={local.get('power')}",
+                    self.client.async_set_power(
+                        self.device_id,
+                        self.device_serialno,
+                        unit,
+                        bool(local.get("power")),
+                    ),
                 )
-                _LOGGER.info(
-                    "SensiHydro: mirrored power=%s of %s to the cloud",
-                    local.get("power"),
-                    name,
+                # give the cloud a moment to persist the new power state before
+                # the (on-state only) mode/temperature writes
+                await asyncio.sleep(1.0)
+            if mode_differs and local.get("power"):
+                await _attempt(
+                    f"mode={local.get('mode')}",
+                    self.client.async_set_mode(
+                        self.device_id,
+                        self.device_serialno,
+                        unit,
+                        int(local.get("mode")),
+                    ),
                 )
-            elif mode_differs:
-                await self.client.async_set_mode(
-                    self.device_id,
-                    self.device_serialno,
-                    unit,
-                    int(local.get("mode")),
-                )
-                _LOGGER.info(
-                    "SensiHydro: mirrored mode=%s of %s to the cloud",
-                    local.get("mode"),
-                    name,
-                )
-            elif temp_differs:
-                # The cloud only accepts setpoint writes while the unit is on,
-                # and this call also verifies the new value.
-                await self.client.async_set_temperature(
-                    self.device_id,
-                    self.device_serialno,
-                    unit,
-                    float(local.get("target_temperature")),
-                )
-                _LOGGER.info(
-                    "SensiHydro: mirrored target %.1f of %s to the cloud",
-                    float(local.get("target_temperature")),
-                    name,
+            if temp_differs and local.get("power"):
+                await _attempt(
+                    f"target={float(local.get('target_temperature')):.1f}",
+                    self.client.async_set_temperature(
+                        self.device_id,
+                        self.device_serialno,
+                        unit,
+                        float(local.get("target_temperature")),
+                    ),
                 )
         except SensiHydroAuthError:
             pass
-        except (SensiHydroApiError, SensiHydroConnectionError, SensiHydroWriteError) as err:
-            _LOGGER.debug("SensiHydro: cloud mirror for %s failed: %s", name, err)
 
     async def _async_update_local(self, units: list[dict[str, Any]]) -> None:
         """Read the LAN bridge and overlay the live state onto the cloud data."""
