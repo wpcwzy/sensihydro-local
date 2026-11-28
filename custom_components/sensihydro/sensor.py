@@ -433,10 +433,17 @@ class SensiHydroParamSensor(SensiHydroSensor):
         """Return debugging details of the parameter."""
         param = self._param()
         raw = param.get("value")
+        if self._scope == "unit":
+            source = "local" if coordinator.local_available and coordinator.local_units else None
+        else:
+            source = "local" if self._code in coordinator.local_outdoor else None
+        if source is None and raw is not None:
+            source = "cloud"
         return {
             "code": param.get("code", self._code),
             "raw_value": raw,
             "parsed_unit": parse_param(raw).unit,
+            "value_source": source,
             "label": param.get("label"),
             "style": param.get("style"),
         }

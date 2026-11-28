@@ -108,3 +108,20 @@ automation:
           title: AC local bridge offline
           message: The bridge has been unreachable for 5 minutes; after a Docker upgrade the DTU may have fallen back to the vendor cloud -- power-cycle the heat pump when convenient.
 ```
+
+## All diagnostic entities suddenly "unavailable" (fixed in v1.2.0)
+
+Symptom: dozens of outdoor/indoor diagnostic entities (temperatures, pressures, speed, ...)
+turned `unavailable` at the same moment.
+
+Cause: they used to be created only when the vendor cloud's `selectConfigById` parameter table
+was fetched successfully.  That endpoint is slow (10-40 s) and occasionally times out; one
+failed call during a Home Assistant restart meant the entities were never created until the
+integration was reloaded manually.
+
+Fixed: the entities are created from static definitions and their values are read from the
+bridge over Modbus (see "Diagnostics: local-first").  The `value_source` attribute shows where a
+value comes from (`local` / `cloud`).
+
+A single `unknown` entity such as `用电统计(原始)` is expected: it is a cloud-only field that the
+vendor API returns empty for.

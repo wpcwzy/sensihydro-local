@@ -22,7 +22,7 @@ from .api import (
 )
 from .const import DEFAULT_NOMINAL_VOLTAGE, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .local_api import LocalApiClient, LocalApiError
-from . import hostmode, outdoor
+from . import hostmode, outdoor, params
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,12 @@ def _to_int(value: Any) -> int | None:
 
 type SensiHydroConfigEntry = ConfigEntry[SensiHydroCoordinator]
 
+def _temperature_text(value: float) -> str:
+    """Format a temperature like the cloud does (``21℃`` instead of ``21.0℃``)."""
+    text = f"{value:.1f}"
+    return f"{text[:-2] if text.endswith('.0') else text}℃"
+
+
 def _local_unit_parameter_values(local: dict[str, Any]) -> dict[str, str]:
     """Map a locally read indoor unit state to the cloud parameter codes."""
     firmware = local.get("firmware") or {}
@@ -55,7 +61,7 @@ def _local_unit_parameter_values(local: dict[str, Any]) -> dict[str, str]:
         values["val203"] = str(firmware.get("code_middle", ""))
         values["val204"] = str(firmware.get("code_low", ""))
     if local.get("return_air_temperature") is not None:
-        values["val205"] = f"{float(local['return_air_temperature']):.1f}℃"
+        values["val205"] = _temperature_text(float(local["return_air_temperature"]))
     values["val206"] = "闭合" if local.get("float_switch") else "断开"
     values["val207"] = "开" if local.get("floor_valve") else "关"
     values["val208"] = "开" if local.get("drain_pump") else "关"
@@ -63,13 +69,17 @@ def _local_unit_parameter_values(local: dict[str, Any]) -> dict[str, str]:
     if local.get("fan_rpm") is not None:
         values["val210"] = f"{int(local['fan_rpm'])}转/分"
     if local.get("room_temperature") is not None:
-        values["val213"] = f"{float(local['room_temperature']):.1f}℃"
+        values["val213"] = _temperature_text(float(local["room_temperature"]))
     return values
 
 
 # The slow-changing data (run-time parameter table, schedules, notices, ...)
 # is refreshed at most every 5 minutes instead of on every poll.
 EXTRA_UPDATE_INTERVAL = 300
+#: Retry the run-time parameter table sooner after a failure (the vendor cloud
+#: endpoint is slow and occasionally times out; a 5 minute wait used to leave
+#: the diagnostic entities empty until the next integration reload).
+SERVICE_RETRY_INTERVAL = 90
 
 # The cloud database only updates a unit's on/off state when the command comes
 # through its own API.  Local (Modbus) writes are invisible to it, so the
@@ -139,13 +149,24 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
 
         # extra (slow) data, refreshed every EXTRA_UPDATE_INTERVAL seconds
         self.device: dict[str, Any] = {}
-        self.device_params: dict[str, dict[str, Any]] = {}
+        # Start from the static definitions so the diagnostic entities always
+        # exist, even when the (slow, unreliable) cloud parameter table cannot
+        # be fetched at startup.
+        self.device_params: dict[str, dict[str, Any]] = params.device_param_defs()
         self.unit_params: dict[int, dict[str, dict[str, Any]]] = {}
         self.schedules: list[dict[str, Any]] = []
         self.bind_users: list[dict[str, Any]] = []
         self.notices: dict[str, Any] = {}
         self.electric: Any = None
         self._extra_updated: float = 0.0
+        #: retry the run-time parameter table soon after a failure
+        self._service_retry: bool = False
+        #: background task that refreshes the slow cloud data
+        self._extra_task: asyncio.Task | None = None
+        #: last successfully fetched cloud unit list, used while the cloud is down
+        self._last_units: list[dict[str, Any]] | None = None
+        #: True while the cloud could not be reached and cached data is served
+        self.cloud_stale: bool = False
 
     async def _async_update_data(self) -> dict[int, dict[str, Any]]:
         """Fetch all indoor units (and periodically the extra cloud data)."""
@@ -153,23 +174,38 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             units = await self.client.async_get_units(self.device_id)
             if not units:
                 raise UpdateFailed("cloud returned an empty list of indoor units")
-
-            # The cloud keeps serving cached unit data even when the DTU gateway
-            # is offline; expose that separately so users know commands won't arrive.
-            if self.device_serialno:
-                self.gateway_online = await self.client.async_check_online(
-                    self.device_serialno
-                )
-            else:
-                self.gateway_online = None
         except SensiHydroAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except SensiHydroConnectionError as err:
-            raise UpdateFailed(f"cannot reach SensiHydro cloud: {err}") from err
-        except SensiHydroApiError as err:
-            raise UpdateFailed(f"SensiHydro cloud error: {err}") from err
-        except Exception as err:  # noqa: BLE001 - keep the coordinator alive
-            raise UpdateFailed(f"unexpected error: {err}") from err
+        except Exception as err:  # noqa: BLE001 - fall back to cached data
+            if self._last_units is None:
+                if isinstance(err, UpdateFailed):
+                    raise
+                raise UpdateFailed(f"SensiHydro cloud error: {err}") from err
+            # The LAN bridge is independent of the vendor cloud: keep serving
+            # the last known unit list so local control and the diagnostics
+            # stay available during a cloud outage.
+            if not self.cloud_stale:
+                _LOGGER.warning(
+                    "SensiHydro: cloud unavailable (%s); using cached unit data "
+                    "and the LAN bridge",
+                    err,
+                )
+            self.cloud_stale = True
+            units = self._last_units
+        else:
+            self.cloud_stale = False
+            self._last_units = units
+            # The cloud keeps serving cached unit data even when the DTU gateway
+            # is offline; expose that separately so commands may not arrive.
+            try:
+                if self.device_serialno:
+                    self.gateway_online = await self.client.async_check_online(
+                        self.device_serialno
+                    )
+                else:
+                    self.gateway_online = None
+            except (SensiHydroApiError, SensiHydroConnectionError) as err:
+                _LOGGER.debug("SensiHydro: online check failed: %s", err)
 
         await self._async_update_local(units)
 
@@ -180,12 +216,27 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             except (KeyError, TypeError, ValueError):
                 continue
             data[unit_id] = unit
+            # Static per-unit parameter definitions: the entities must exist
+            # even if the cloud parameter table is unavailable.
+            self.unit_params.setdefault(unit_id, params.unit_param_defs())
         _LOGGER.debug("SensiHydro: polling %s units", len(data))
 
         now = time.monotonic()
-        if now - self._extra_updated >= EXTRA_UPDATE_INTERVAL:
-            await self._async_update_extra(data)
+        retry_due = self._service_retry and (
+            now - self._extra_updated >= SERVICE_RETRY_INTERVAL
+        )
+        extra_due = now - self._extra_updated >= EXTRA_UPDATE_INTERVAL or retry_due
+        if not self.cloud_stale and extra_due and (
+            self._extra_task is None or self._extra_task.done()
+        ):
+            # The extra endpoints are slow (the parameter table alone can take
+            # 10-40 s), so they must never block a poll or the integration
+            # setup.  The local parameter overlay is applied right below
+            # anyway, so the entities have live values immediately.
             self._extra_updated = now
+            self._extra_task = self.hass.async_create_task(
+                self._async_refresh_extra(data)
+            )
 
         # Overlay the run-time parameter tables with live values read straight
         # from the controller (the cloud table is only a cached snapshot).
@@ -204,15 +255,14 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             return
 
         # --- outdoor unit (val100..val124) -------------------------------
-        if self.device_params:
-            try:
-                values = await outdoor.async_read_outdoor(self._local)
-            except LocalApiError as err:
-                _LOGGER.debug("SensiHydro: local outdoor parameters unavailable: %s", err)
-            else:
-                if values:
-                    outdoor.apply(self.device_params, values)
-                    self.local_outdoor = values
+        try:
+            values = await outdoor.async_read_outdoor(self._local)
+        except LocalApiError as err:
+            _LOGGER.debug("SensiHydro: local outdoor parameters unavailable: %s", err)
+        else:
+            if values:
+                outdoor.apply(self.device_params, values)
+                self.local_outdoor = values
 
         # --- indoor units (val200..val213) -------------------------------
         if not self.local_units:
@@ -238,7 +288,7 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         ``RECONCILE_PERSIST_SECONDS`` (so a command issued in the app, which
         needs a few tens of seconds to reach the unit, is never fought).
         """
-        if not self.local_available or not self.local_units:
+        if not self.local_available or not self.local_units or self.cloud_stale:
             return
         if self.gateway_online is False:
             return
@@ -408,6 +458,19 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
                 "fan_rpm": local.get("fan_rpm"),
             }
 
+    async def _async_refresh_extra(self, units: dict[int, dict[str, Any]]) -> None:
+        """Fetch the slow data in the background and re-apply LAN values."""
+        try:
+            await self._async_update_extra(units)
+        except SensiHydroAuthError:
+            _LOGGER.debug("SensiHydro: auth rejected while refreshing extra data")
+        except Exception as err:  # noqa: BLE001 - background task must not die
+            _LOGGER.debug("SensiHydro: extra refresh failed: %s", err)
+        finally:
+            # The cloud snapshot is older than the controller state; never let
+            # it overwrite the values read over the LAN.
+            await self._async_apply_local_parameters(units)
+
     async def _async_update_extra(self, units: dict[int, dict[str, Any]]) -> None:
         """Fetch the slow-changing details; a failure here is not fatal."""
         unit_id_by_name = {
@@ -432,9 +495,13 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             raise
         except (SensiHydroApiError, SensiHydroConnectionError) as err:
             _LOGGER.debug("SensiHydro: run-time parameters unavailable: %s", err)
+            self._service_retry = True
         else:
             if service:
                 self._parse_service_config(service, unit_id_by_name)
+                self._service_retry = False
+            else:
+                self._service_retry = True
 
         try:
             self.schedules = await self.client.async_get_schedules(self.device_id)

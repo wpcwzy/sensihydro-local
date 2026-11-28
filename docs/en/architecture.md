@@ -114,6 +114,35 @@ To keep the history graphs continuous:
 - after a restart the previous state is restored via `RestoreEntity`, so restarts do not
   create gaps either.
 
+
+## Diagnostics: local-first (v1.2.0)
+
+**The failure mode**: 95+ diagnostic entities (25 outdoor run-time parameters plus 12 per indoor
+unit) were created from the vendor cloud's run-time table
+(`customservice/selectConfigById`).  That endpoint is slow (10-40 s) and sometimes returns
+`"--"`; if it failed once during a Home Assistant restart the entities were never created and
+every one of them showed as *unavailable* until the integration was manually reloaded.
+
+**What it does now**: the parameter set is fixed, therefore
+
+1. `params.py` defines all parameters statically (names identical to the cloud), so the
+   entities are **always created**;
+2. values are read from the controller over Modbus whenever possible:
+   - outdoor `val100..val124` -> holding registers `0x0064..0x007C` (all 25 values, including
+     temperatures, pressures, current, compressor frequency, relay states, run mode, defrost);
+   - indoor `val200..val213` -> each unit's state block `0x00C8 + 20*(slot-1)` (versions,
+     identity code, return-air temperature, float switch, floor valve, drain pump, valve
+     direction, fan rpm, room temperature);
+3. only the protection/fault flags (`val125_*`, `val211_*`, ...) have no known register and
+   still come from the cloud;
+4. the cloud table is refreshed **in the background** (it never blocks startup), is retried after
+   90 s on failure and now has a generous 75 s timeout;
+5. when the cloud is unreachable the last known unit list is reused, so local control and the
+   diagnostics keep working instead of the whole integration going unavailable.
+
+Every parameter entity exposes a `value_source` attribute (`local` / `cloud`).
+Self-test: `python3 tests/test_param_decoding.py`.
+
 ## Cloud reconciliation (LAN → cloud)
 
 The vendor cloud only updates a unit's state when the command comes through **its own API**;

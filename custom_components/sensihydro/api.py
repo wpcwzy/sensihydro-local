@@ -37,6 +37,7 @@ import aiohttp
 from .const import (
     API_BASE,
     API_TIMEOUT,
+    PARAM_TIMEOUT,
     FAN_AUTO,
     MAX_TEMP,
     MIN_TEMP,
@@ -146,7 +147,11 @@ class SensiHydroClient:
     # ------------------------------------------------------------------ HTTP
 
     async def _async_raw(
-        self, path: str, params: dict[str, Any] | None, method: str = "GET"
+        self,
+        path: str,
+        params: dict[str, Any] | None,
+        method: str = "GET",
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Perform one HTTP call and decode the JSON envelope."""
         url = f"{API_BASE}/{path.lstrip('/')}"
@@ -160,13 +165,19 @@ class SensiHydroClient:
         try:
             if method == "GET":
                 async with self._session.get(
-                    url, params=params, headers=headers, timeout=API_TIMEOUT
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=timeout or API_TIMEOUT,
                 ) as resp:
                     status = resp.status
                     text = await resp.text()
             else:
                 async with self._session.post(
-                    url, json=params or {}, headers=headers, timeout=API_TIMEOUT
+                    url,
+                    json=params or {},
+                    headers=headers,
+                    timeout=timeout or API_TIMEOUT,
                 ) as resp:
                     status = resp.status
                     text = await resp.text()
@@ -237,10 +248,11 @@ class SensiHydroClient:
         method: str = "GET",
         *,
         retry: bool = True,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Perform an authenticated API call."""
         await self.async_ensure_token()
-        data = await self._async_raw(path, params, method)
+        data = await self._async_raw(path, params, method, timeout)
         self._async_store_token(data)
 
         if data.get("status") == 0:
@@ -254,7 +266,9 @@ class SensiHydroClient:
             # The server side token may have been invalidated before its exp.
             _LOGGER.debug("SensiHydro: token rejected, logging in again")
             await self.async_login()
-            return await self.async_request(path, params, method, retry=False)
+            return await self.async_request(
+                path, params, method, retry=False, timeout=timeout
+            )
         if looks_like_auth:
             raise SensiHydroAuthError(f"token rejected: {message}")
         raise SensiHydroApiError(data.get("status"), message)
@@ -611,7 +625,8 @@ class SensiHydroClient:
         states, fault codes). Values are ``"--"`` while the DTU is offline.
         """
         data = await self.async_request(
-            f"customservice/selectConfigById/{device_serialno}"
+            f"customservice/selectConfigById/{device_serialno}",
+            timeout=PARAM_TIMEOUT,
         )
         result = data.get("data")
         return result if isinstance(result, dict) else None

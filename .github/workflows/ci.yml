@@ -14,6 +14,9 @@ jobs:
           python-version: "3.12"
       - name: Byte-compile all Python files
         run: python -m compileall -q bridge custom_components tools extras
+      - name: Test parameter decoding
+        run: python3 tests/test_param_decoding.py
+
       - name: Smoke test bridge startup
         env:
           VENDOR_IP: 127.0.0.1

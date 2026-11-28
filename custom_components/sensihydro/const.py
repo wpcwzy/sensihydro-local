@@ -23,19 +23,22 @@ CONF_LOCAL_API: Final = "local_api_url"
 # Cloud API
 API_BASE: Final = "https://sensihydro.copeland.cn/api/v2"
 API_TIMEOUT: Final = 40
+#: The run-time parameter table endpoint is much slower than the rest of the
+#: API (10-40 s); give it its own, generous timeout.
+PARAM_TIMEOUT: Final = 75
 
 # Token storage
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.session"
 
-DEFAULT_DEVICE_ID: Final = 0  # resolved from the cloud device list
+DEFAULT_DEVICE_ID: Final = 3278
 # Fallback AC voltage used for the estimated input power when the outdoor
 # unit reports 0 V (some firmwares do not measure the AC input voltage).
 DEFAULT_NOMINAL_VOLTAGE: Final = 220.0
 MIN_VALID_VOLTAGE: Final = 50.0
 DEFAULT_SCAN_INTERVAL: Final = 45
 # LAN bridge (docker container on the NAS).  Empty string disables local control.
-DEFAULT_LOCAL_API: Final = "http://192.168.1.10:8090"
+DEFAULT_LOCAL_API: Final = "http://192.168.110.28:8090"
 LOCAL_API_TIMEOUT: Final = 6
 MIN_SCAN_INTERVAL: Final = 15
 MAX_SCAN_INTERVAL: Final = 600
