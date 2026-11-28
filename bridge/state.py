@@ -24,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 class StateStore:
     """Cached unit/host-mode snapshot with a lazy background refresher."""
 
-    def __init__(self, bridge, interval: float = 5.0, active_window: float = 8.0) -> None:
+    def __init__(self, bridge, interval: float = 5.0, active_window: float = 5.0) -> None:
         self.bridge = bridge
         # A full refresh costs ~2.5 s on the RS485 bus, so keep the duty cycle
         # moderate: poll only while a UI/HA client has been active recently.
@@ -32,6 +32,9 @@ class StateStore:
         self.active_window = active_window
 
         self._lock = threading.Lock()
+        #: both the background worker and on-demand requests may refresh; the
+        #: Modbus bus must never be driven concurrently
+        self._refresh_lock = threading.Lock()
         self._state: dict[str, dict] | None = None
         self._host: dict | None = None
         self._ts = 0.0
@@ -65,8 +68,18 @@ class StateStore:
         with self._lock:
             self._last_request = time.monotonic()
 
-    def get(self) -> tuple[dict[str, dict], dict, float]:
-        """Return ``(units, host_mode, age_seconds)`` without waiting."""
+    def get(
+        self, max_age: float | None = None
+    ) -> tuple[dict[str, dict], dict, float]:
+        """Return ``(units, host_mode, age_seconds)``.
+
+        With ``max_age`` the caller asks for data that is at most that many
+        seconds old; a stale snapshot is refreshed synchronously (one Modbus
+        sweep, ~2.5 s).  Without it the cached snapshot is returned immediately
+        and the background worker keeps it fresh.  Synchronous refreshes make a
+        poll cadence like 15 s cheap: one sweep per request instead of letting
+        the background worker sweep two or three times in between.
+        """
         self.touch()
         with self._lock:
             state, host, ts, dirty = self._state, self._host, self._ts, self._dirty
@@ -78,14 +91,24 @@ class StateStore:
             if state is None:
                 raise RuntimeError("state snapshot unavailable")
             return state, host or {}, time.monotonic() - ts
-        if dirty:
+        age = time.monotonic() - ts
+        if max_age is not None and age > max_age:
+            self.refresh()
+            with self._lock:
+                state, host, ts = self._state, self._host, self._ts
+            age = time.monotonic() - ts
+        elif dirty:
             self._wake.set()
-        return state, host or {}, time.monotonic() - ts
+        return state, host or {}, age
 
     # ------------------------------------------------------------- internals
 
     def refresh(self) -> None:
         """Read all units + host mode and publish a new snapshot."""
+        with self._refresh_lock:
+            self._refresh_locked()
+
+    def _refresh_locked(self) -> None:
         try:
             state = units.read_all(self.bridge)
             try:

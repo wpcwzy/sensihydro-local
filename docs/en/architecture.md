@@ -115,6 +115,30 @@ To keep the history graphs continuous:
   create gaps either.
 
 
+
+## Polling policy (v1.3.0)
+
+The interval follows the data source, balancing responsiveness against RS485-bus and vendor-API
+load:
+
+| Data source | Entity refresh | Vendor cloud API |
+|---|---|---|
+| **LAN mode** (bridge reachable) | **15 s** | once every **60 s** (unit ids + fault flags only) |
+| **Cloud mode** (no bridge) | **45 s** (15-600 s configurable in the options) | every poll |
+
+In LAN mode the integration requests `/api/state?max_age=8`: the bridge refreshes its snapshot
+synchronously only when it is older than 8 s (one full sweep takes ~2.5 s), so a 15 s poll costs
+exactly one sweep and leaves the RS485 bus mostly free; the cloud is still synced every 60 s for
+unit ids and the fault flags.
+
+Why these numbers:
+
+* a full read is ~13 register blocks (~2.5 s), so 15 s keeps the bus duty around 20%; faster
+  cycles (e.g. 5 s) would noticeably delay the vendor-polled requests and writes;
+* in cloud mode the data is a vendor-side cached snapshot anyway, so 45 s is responsive enough
+  and keeps the API load low;
+* the cloud-mode interval stays configurable (15-600 s) in the integration options.
+
 ## Diagnostics: local-first (v1.2.0)
 
 **The failure mode**: 95+ diagnostic entities (25 outdoor run-time parameters plus 12 per indoor

@@ -68,7 +68,13 @@ def main() -> int:
         else:
             dns = None
 
-    server = create_server(bridge, "0.0.0.0", config.http_port)
+    server = create_server(
+        bridge,
+        "0.0.0.0",
+        config.http_port,
+        state_interval=config.state_interval,
+        state_active_window=config.state_active_window,
+    )
     http_thread = threading.Thread(
         target=server.serve_forever, name="http-api", daemon=True
     )

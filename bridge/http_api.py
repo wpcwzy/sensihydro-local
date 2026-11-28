@@ -29,9 +29,9 @@ class SensiHydroApi:
 
     # ------------------------------------------------------------------ state
 
-    def get_state(self) -> dict:
-        """Return the cached snapshot (the background worker keeps it fresh)."""
-        state, _host, _age = self.store.get()
+    def get_state(self, max_age: float | None = None) -> dict:
+        """Return the snapshot (refreshed synchronously when it is too old)."""
+        state, _host, _age = self.store.get(max_age)
         return state
 
     def get_host_mode(self) -> dict:
@@ -102,7 +102,14 @@ class SensiHydroApi:
                 return handler.send_json({"ok": True, "units": list(units.UNITS)})
 
             if path == "/api/state":
-                data = self.get_state()
+                raw_max_age = (handler.query_params.get("max_age") or [None])[0]
+                max_age: float | None = None
+                if raw_max_age not in (None, ""):
+                    try:
+                        max_age = max(0.0, float(raw_max_age))
+                    except ValueError:
+                        max_age = None
+                data = self.get_state(max_age)
                 return handler.send_json({"ok": True, "units": data})
 
             if path.startswith("/api/unit/"):
@@ -255,8 +262,14 @@ class Handler(BaseHTTPRequestHandler):
         self.api.handle(self)
 
 
-def create_server(bridge: DtuBridge, host: str, port: int) -> ThreadingHTTPServer:
-    store = StateStore(bridge)
+def create_server(
+    bridge: DtuBridge,
+    host: str,
+    port: int,
+    state_interval: float = 5.0,
+    state_active_window: float = 5.0,
+) -> ThreadingHTTPServer:
+    store = StateStore(bridge, interval=state_interval, active_window=state_active_window)
     store.start()
     api = SensiHydroApi(bridge, store)
 

@@ -68,9 +68,19 @@ class LocalApiClient:
         """Return the bridge health status."""
         return await self._request("GET", "/api/status")
 
-    async def async_get_state(self) -> dict[str, dict[str, Any]]:
-        """Return the state of every indoor unit keyed by unit name."""
-        data = await self._request("GET", "/api/state")
+    async def async_get_state(
+        self, max_age: float | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Return the state of every indoor unit keyed by unit name.
+
+        ``max_age`` asks the bridge to refresh its snapshot synchronously when
+        it is older than that many seconds, so a 15 s poll cycle costs exactly
+        one Modbus sweep (the bridge otherwise refreshes in the background).
+        """
+        path = "/api/state"
+        if max_age is not None:
+            path += f"?max_age={max_age:g}"
+        data = await self._request("GET", path)
         units = data.get("units") or {}
         if not isinstance(units, dict):
             raise LocalApiError("bridge returned no unit table")

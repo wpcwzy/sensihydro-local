@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 from datetime import timedelta
@@ -23,6 +24,11 @@ from .api import (
 from .const import DEFAULT_NOMINAL_VOLTAGE, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .local_api import LocalApiClient, LocalApiError
 from . import hostmode, outdoor, params
+from .polling import (
+    LOCAL_STATE_MAX_AGE,
+    cloud_refresh_interval,
+    scan_interval as policy_scan_interval,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,8 +120,10 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
             _LOGGER,
             config_entry=config_entry,
             name=DOMAIN,
-            update_interval=timedelta(seconds=max(15, scan_interval)),
+            update_interval=timedelta(seconds=policy_scan_interval(True, scan_interval)),
         )
+        #: user-configurable cloud-mode polling interval (option "scan_interval")
+        self._cloud_interval = max(15, int(scan_interval))
         self.client = client
         self.device_id = device_id
         self.device_serialno = device_serialno
@@ -165,47 +173,71 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         self._extra_task: asyncio.Task | None = None
         #: last successfully fetched cloud unit list, used while the cloud is down
         self._last_units: list[dict[str, Any]] | None = None
+        #: monotonic timestamp of the last successful cloud unit fetch
+        self._cloud_updated: float = 0.0
+        #: True when this update deliberately used cached cloud data (LAN mode)
+        self._cloud_skipped: bool = False
         #: True while the cloud could not be reached and cached data is served
         self.cloud_stale: bool = False
 
     async def _async_update_data(self) -> dict[int, dict[str, Any]]:
         """Fetch all indoor units (and periodically the extra cloud data)."""
-        try:
-            units = await self.client.async_get_units(self.device_id)
-            if not units:
-                raise UpdateFailed("cloud returned an empty list of indoor units")
-        except SensiHydroAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except Exception as err:  # noqa: BLE001 - fall back to cached data
-            if self._last_units is None:
-                if isinstance(err, UpdateFailed):
-                    raise
-                raise UpdateFailed(f"SensiHydro cloud error: {err}") from err
-            # The LAN bridge is independent of the vendor cloud: keep serving
-            # the last known unit list so local control and the diagnostics
-            # stay available during a cloud outage.
-            if not self.cloud_stale:
-                _LOGGER.warning(
-                    "SensiHydro: cloud unavailable (%s); using cached unit data "
-                    "and the LAN bridge",
-                    err,
-                )
-            self.cloud_stale = True
-            units = self._last_units
+        now = time.monotonic()
+        # In LAN mode the cloud is only needed for unit ids and the fault flags;
+        # querying it on every poll would only add vendor-API load.
+        skip_cloud = (
+            self.local_available
+            and self._last_units is not None
+            and self._cloud_updated > 0
+            and now - self._cloud_updated
+            < cloud_refresh_interval(True, self._cloud_interval)
+        )
+        units: list[dict[str, Any]]
+        if skip_cloud:
+            self._cloud_skipped = True
+            units = copy.deepcopy(self._last_units)
         else:
-            self.cloud_stale = False
-            self._last_units = units
-            # The cloud keeps serving cached unit data even when the DTU gateway
-            # is offline; expose that separately so commands may not arrive.
+            self._cloud_skipped = False
             try:
-                if self.device_serialno:
-                    self.gateway_online = await self.client.async_check_online(
-                        self.device_serialno
+                fetched = await self.client.async_get_units(self.device_id)
+                if not fetched:
+                    raise UpdateFailed(
+                        "cloud returned an empty list of indoor units"
                     )
-                else:
-                    self.gateway_online = None
-            except (SensiHydroApiError, SensiHydroConnectionError) as err:
-                _LOGGER.debug("SensiHydro: online check failed: %s", err)
+            except SensiHydroAuthError as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            except Exception as err:  # noqa: BLE001 - fall back to cached data
+                if self._last_units is None:
+                    if isinstance(err, UpdateFailed):
+                        raise
+                    raise UpdateFailed(f"SensiHydro cloud error: {err}") from err
+                # The LAN bridge is independent of the vendor cloud: keep
+                # serving the last known unit list so local control and the
+                # diagnostics stay available during a cloud outage.
+                if not self.cloud_stale:
+                    _LOGGER.warning(
+                        "SensiHydro: cloud unavailable (%s); using cached unit "
+                        "data and the LAN bridge",
+                        err,
+                    )
+                self.cloud_stale = True
+                units = copy.deepcopy(self._last_units)
+            else:
+                self.cloud_stale = False
+                self._cloud_updated = now
+                self._last_units = copy.deepcopy(fetched)
+                units = fetched
+                # The cloud keeps serving cached unit data even when the DTU
+                # gateway is offline; expose that so commands may not arrive.
+                try:
+                    if self.device_serialno:
+                        self.gateway_online = await self.client.async_check_online(
+                            self.device_serialno
+                        )
+                    else:
+                        self.gateway_online = None
+                except (SensiHydroApiError, SensiHydroConnectionError) as err:
+                    _LOGGER.debug("SensiHydro: online check failed: %s", err)
 
         await self._async_update_local(units)
 
@@ -244,6 +276,18 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
 
         # Push LAN-side state changes to the cloud so the official app agrees.
         self._schedule_cloud_reconcile(units)
+
+        # LAN mode polls fast, cloud mode stays relaxed (see polling.py).
+        target_interval = policy_scan_interval(
+            self.local_available, self._cloud_interval
+        )
+        if self.update_interval != timedelta(seconds=target_interval):
+            _LOGGER.debug(
+                "SensiHydro: polling every %s s via %s",
+                target_interval,
+                "LAN" if self.local_available else "cloud",
+            )
+            self.update_interval = timedelta(seconds=target_interval)
 
         return data
 
@@ -288,7 +332,12 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         ``RECONCILE_PERSIST_SECONDS`` (so a command issued in the app, which
         needs a few tens of seconds to reach the unit, is never fought).
         """
-        if not self.local_available or not self.local_units or self.cloud_stale:
+        if (
+            not self.local_available
+            or not self.local_units
+            or self.cloud_stale
+            or self._cloud_skipped
+        ):
             return
         if self.gateway_online is False:
             return
@@ -409,7 +458,9 @@ class SensiHydroCoordinator(DataUpdateCoordinator[dict[int, dict[str, Any]]]):
         if self._local is None:
             return
         try:
-            local_units = await self._local.async_get_state()
+            local_units = await self._local.async_get_state(
+                max_age=LOCAL_STATE_MAX_AGE
+            )
         except LocalApiError as err:
             if self.local_available:
                 _LOGGER.info("SensiHydro local bridge unavailable: %s", err)

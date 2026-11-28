@@ -148,6 +148,11 @@ class Config:
         # open while it stopped polling, and the DTU can stop answering after a
         # bus lock-up.  Both leave a "connected but dead" link, so the relay
         # forces a reconnect after these idle periods.  0 disables a watchdog.
+        # State cache: how stale the cached snapshot may get while a client is
+        # active (a full sweep takes ~2.5 s on the RS485 bus).
+        self.state_interval = float(os.environ.get("STATE_INTERVAL", "5"))
+        self.state_active_window = float(os.environ.get("STATE_ACTIVE_WINDOW", "5"))
+
         self.cloud_idle_timeout = float(os.environ.get("CLOUD_IDLE_TIMEOUT", "300"))
         self.dtu_idle_timeout = float(os.environ.get("DTU_IDLE_TIMEOUT", "180"))
 
